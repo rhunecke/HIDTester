@@ -1,0 +1,61 @@
+name: Build Linux Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download ImGui
+      run: |
+        mkdir -p thirdparty
+        git clone --depth 1 https://github.com/ocornut/imgui.git thirdparty/imgui
+
+    - name: Install Linux Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libsdl2-dev libgl1-mesa-dev
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Application
+      run: cmake --build build --config Release -j 4
+
+    - name: Package Release
+      run: |
+        VERSION="${{ github.ref_name }}"
+        DIR_NAME="HIDTester-$VERSION-Linux"
+        
+        mkdir -p "$DIR_NAME"
+        
+        cp build/HIDTester "$DIR_NAME/"
+        cp README.md "$DIR_NAME/" || true
+        cp LICENSE "$DIR_NAME/" || true
+
+        zip -r "$DIR_NAME.zip" "$DIR_NAME/"
+
+    - name: Upload Artifact to Actions
+      uses: actions/upload-artifact@v4
+      with:
+        name: HIDTester-${{ github.ref_name }}-Linux
+        path: HIDTester-${{ github.ref_name }}-Linux/
+
+    - name: Upload to GitHub Release
+      if: github.event_name == 'release'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ github.ref_name }} "HIDTester-${{ github.ref_name }}-Linux.zip"

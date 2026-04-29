@@ -1,0 +1,34 @@
+# --- Build outputs and CMake ---
+/build/
+/Build/
+/out/
+/bin/
+/.vs/
+CMakeCache.txt
+CMakeFiles/
+
+# --- External Libraries (Manual Sync Required) ---
+/thirdparty/SDL2/
+/thirdparty/imgui/
+
+# --- IDE & System Files ---
+*.user
+*.sln
+*.vcxproj
+*.filters
+*.suo
+
+# --- Compiled Binaries & Objects ---
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.ilk
+*.a
+*.lib
+*.so
+*.dylib
+
+# --- Versioning auto-generated file ---
+/src/version.h
