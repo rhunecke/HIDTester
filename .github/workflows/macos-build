@@ -1,0 +1,64 @@
+name: Build macOS Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch: # Allows manual testing
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    env:
+      # Ensure modern Node version for the runner
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download ImGui
+      run: |
+        mkdir -p thirdparty
+        git clone --depth 1 https://github.com/ocornut/imgui.git thirdparty/imgui
+
+    - name: Install Dependencies
+      run: |
+        brew update
+        brew install sdl2 cmake
+
+    - name: Configure CMake
+      # We define the build type and ensure SDL2 is found via standard brew paths
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Application
+      run: cmake --build build --config Release -j 4
+
+    - name: Package Release
+      run: |
+        VERSION="${{ github.ref_name }}"
+        DIR_NAME="HIDTester-$VERSION-macOS"
+        mkdir -p "$DIR_NAME"
+        
+        # Copy binary and metadata
+        cp build/HIDTester "$DIR_NAME/"
+        cp README.md "$DIR_NAME/" || true
+        cp LICENSE "$DIR_NAME/" || true
+        
+        # Zip the folder for distribution
+        zip -r "$DIR_NAME.zip" "$DIR_NAME/"
+
+    - name: Upload Artifact to Actions
+      uses: actions/upload-artifact@v4
+      with:
+        name: HIDTester-${{ github.ref_name }}-macOS
+        path: HIDTester-${{ github.ref_name }}-macOS/
+
+    - name: Upload to GitHub Release
+      if: github.event_name == 'release'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ github.ref_name }} "HIDTester-${{ github.ref_name }}-macOS.zip"
