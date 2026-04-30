@@ -99,50 +99,54 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
 }
 
 /**
- * Visualizes Analog Axes with ProgressBars and raw numeric values.
- * Uses the clean JoystickState (MVC pattern) instead of a direct SDL pointer.
+ * Visualizes Analog Axes with ProgressBars.
+ * Displays both normalized float and the 16-bit SDL-scaled integer.
  */
 void DrawAnalogAxes(const JoystickState& state) {
-    int numAxes = (int)state.rawAxes.size();
+    int numAxes = (int)state.sdlAxes.size();
     
     if (numAxes > 0) {
-        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Analog Axes");
+        // Transparent UI labeling
+        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Analog Axes (SDL 16-bit Scaled)");
+        
+        // Hover tooltip to educate users about hardware vs. API resolution
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Note: Generic HID APIs (like SDL/DirectInput) automatically scale all\n"
+                "hardware sensor data to a 16-bit range (-32768 to 32767).\n"
+                "If your device has an 8-bit or 10-bit ADC (like an Arduino Leonardo),\n"
+                "these numbers are upscaled and will jump in larger increments."
+            );
+        }
+        
         ImGui::Separator();
         ImGui::Spacing();
 
         for (int i = 0; i < numAxes; i++) {
-            // Retrieve the exact 16-bit raw value from our state
-            int16_t rawValue = state.rawAxes[i];
-            
-            // Retrieve the normalized float value (-1.0f to 1.0f)
+            // Retrieve the 16-bit value scaled by SDL
+            int16_t sdlValue = state.sdlAxes[i];
             float floatValue = state.axes[i];
             
-            // Normalize to 0.0f - 1.0f strictly for the visual ProgressBar length
-            float normalizedLength = (static_cast<float>(rawValue) + 32768.0f) / 65535.0f;
+            float normalizedLength = (static_cast<float>(sdlValue) + 32768.0f) / 65535.0f;
 
             ImGui::Text("Axis %d:", i);
             ImGui::SameLine(70);
 
-            // Dynamic color feedback: turn brighter green when moved significantly
             ImVec4 barColor = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
-            if (std::abs(rawValue) > 1000) {
+            if (std::abs(sdlValue) > 1000) {
                 barColor = ImVec4(0.0f, 0.8f, 0.3f, 1.0f);
             }
 
-            // Format the float value to 4 decimal places for the overlay
             char overlayText[32];
             snprintf(overlayText, sizeof(overlayText), "%.4f", floatValue);
 
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-            
-            // Pass the formatted float string as the 3rd argument to center it inside the bar
             ImGui::ProgressBar(normalizedLength, ImVec2(-60, 16), overlayText); 
-            
             ImGui::PopStyleColor();
 
-            // Display the exact raw numeric value on the far right
+            // Display the exact integer value provided by the API
             ImGui::SameLine();
-            ImGui::TextDisabled("%6d", rawValue);
+            ImGui::TextDisabled("%6d", sdlValue);
         }
     }
 }
