@@ -72,35 +72,23 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
     ImVec2 center = ImVec2(p0.x + sz.x * 0.5f, p0.y + sz.y * 0.5f);
     
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    
-    // Background: Dark circle with border
     draw_list->AddCircleFilled(center, size * 0.5f, IM_COL32(25, 25, 25, 255));
     draw_list->AddCircle(center, size * 0.5f, IM_COL32(80, 80, 80, 255), 0, 2.0f);
-    
-    // Main axes (Cross)
     draw_list->AddLine(ImVec2(center.x - size * 0.5f, center.y), ImVec2(center.x + size * 0.5f, center.y), IM_COL32(60, 60, 60, 255));
     draw_list->AddLine(ImVec2(center.x, center.y - size * 0.5f), ImVec2(center.x, center.y + size * 0.5f), IM_COL32(60, 60, 60, 255));
     
-    // Diagonal axes (X)
     float diag = size * 0.35f;
     draw_list->AddLine(ImVec2(center.x - diag, center.y - diag), ImVec2(center.x + diag, center.y + diag), IM_COL32(45, 45, 45, 255));
     draw_list->AddLine(ImVec2(center.x + diag, center.y - diag), ImVec2(center.x - diag, center.y + diag), IM_COL32(45, 45, 45, 255));
 
-    // Calculate dot position based on hat state
-    float dx = 0.0f;
-    float dy = 0.0f;
+    float dx = 0.0f, dy = 0.0f;
     if (hatState & SDL_HAT_UP)    dy = -1.0f;
     if (hatState & SDL_HAT_DOWN)  dy =  1.0f;
     if (hatState & SDL_HAT_LEFT)  dx = -1.0f;
     if (hatState & SDL_HAT_RIGHT) dx =  1.0f;
 
-    // Normalize for perfect diagonals
-    if (dx != 0.0f && dy != 0.0f) {
-        dx *= 0.7071f;
-        dy *= 0.7071f;
-    }
+    if (dx != 0.0f && dy != 0.0f) { dx *= 0.7071f; dy *= 0.7071f; }
 
-    // Draw the indicator dot
     ImVec2 dot_pos = ImVec2(center.x + (dx * size * 0.4f), center.y + (dy * size * 0.4f));
     draw_list->AddCircleFilled(dot_pos, 6.0f, IM_COL32(0, 0, 0, 150));
     draw_list->AddCircleFilled(dot_pos, 5.0f, IM_COL32(0, 255, 100, 255));
@@ -110,20 +98,69 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
     ImGui::EndGroup();
 }
 
+/**
+ * Visualizes Analog Axes with ProgressBars and raw numeric values.
+ * Uses the clean JoystickState (MVC pattern) instead of a direct SDL pointer.
+ */
+void DrawAnalogAxes(const JoystickState& state) {
+    int numAxes = (int)state.rawAxes.size();
+    
+    if (numAxes > 0) {
+        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Analog Axes");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        for (int i = 0; i < numAxes; i++) {
+            // Retrieve the exact 16-bit raw value from our state
+            int16_t rawValue = state.rawAxes[i];
+            
+            // Retrieve the normalized float value (-1.0f to 1.0f)
+            float floatValue = state.axes[i];
+            
+            // Normalize to 0.0f - 1.0f strictly for the visual ProgressBar length
+            float normalizedLength = (static_cast<float>(rawValue) + 32768.0f) / 65535.0f;
+
+            ImGui::Text("Axis %d:", i);
+            ImGui::SameLine(70);
+
+            // Dynamic color feedback: turn brighter green when moved significantly
+            ImVec4 barColor = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
+            if (std::abs(rawValue) > 1000) {
+                barColor = ImVec4(0.0f, 0.8f, 0.3f, 1.0f);
+            }
+
+            // Format the float value to 4 decimal places for the overlay
+            char overlayText[32];
+            snprintf(overlayText, sizeof(overlayText), "%.4f", floatValue);
+
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
+            
+            // Pass the formatted float string as the 3rd argument to center it inside the bar
+            ImGui::ProgressBar(normalizedLength, ImVec2(-60, 16), overlayText); 
+            
+            ImGui::PopStyleColor();
+
+            // Display the exact raw numeric value on the far right
+            ImGui::SameLine();
+            ImGui::TextDisabled("%6d", rawValue);
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) return -1;
 
     const char* glsl_version = "#version 130";
+    // --- Set OpenGL context version ---
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 
-    // Official Application Name
-    SDL_Window* window = SDL_CreateWindow("HID Tester - A free Joystick Testing App", 
+    SDL_Window* window = SDL_CreateWindow("HID Tester - Pro Controller Testing Utility", 
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 
                                           1280, 900, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     
-    // --- SET WINDOW ICON FROM RESOURCES ---
+    // --- ICON LOADING ---
     #ifdef _WIN32
     SDL_SysWMinfo wmInfo;
     SDL_VERSION(&wmInfo.version);
@@ -143,13 +180,13 @@ int main(int argc, char* argv[]) {
     
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 0.0f;
-    style.FrameRounding = 4.0f;
+    style.FrameRounding = 3.0f;
     style.WindowBorderSize = 0.0f;
-    style.ItemSpacing = ImVec2(10, 10);
+    style.ItemSpacing = ImVec2(8, 8);
 
     ImGui::StyleColorsDark(); 
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
-    style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.09f, 0.09f, 0.09f, 1.00f);
+    style.Colors[ImGuiCol_Header]   = ImVec4(0.20f, 0.25f, 0.30f, 1.00f);
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -181,11 +218,11 @@ int main(int argc, char* argv[]) {
         ImGui::SetNextWindowSize(io.DisplaySize);
         ImGui::Begin("MainViewport", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
 
-        // --- 1. TOP TOOLBAR ---
-        ImGui::BeginChild("Toolbar", ImVec2(0, 60), true, ImGuiWindowFlags_MenuBar);
+        // --- TOOLBAR ---
+        ImGui::BeginChild("Toolbar", ImVec2(0, 50), true, ImGuiWindowFlags_MenuBar);
         if (ImGui::BeginMenuBar()) {
             ImGui::Text("Device:");
-            ImGui::SetNextItemWidth(250);
+            ImGui::SetNextItemWidth(300);
             int nJoysticks = SDL_NumJoysticks();
             const char* currentName = (nJoysticks > 0) ? SDL_JoystickNameForIndex(selectedDevice) : "No Device Detected";
             
@@ -199,64 +236,31 @@ int main(int argc, char* argv[]) {
                 }
                 ImGui::EndCombo();
             }
-
             ImGui::SameLine();
             ImGui::Checkbox("Show Monitors", &showVisualizer);
-
-            float right_offset = ImGui::GetWindowWidth() - 100.0f; 
-            if (right_offset > ImGui::GetCursorPosX()) ImGui::SameLine(right_offset);
-            if (ImGui::Button("About (?)")) {
-                show_about_window = true;
-            }
+            
+            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
+            if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
 
             ImGui::EndMenuBar();
         }
         ImGui::EndChild();
 
-        // --- ABOUT MODAL WINDOW ---
-        if (show_about_window) {
-            ImGui::OpenPopup("About HID Tester");
-        }
-        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
+        // --- ABOUT MODAL ---
+        if (show_about_window) ImGui::OpenPopup("About HID Tester");
         if (ImGui::BeginPopupModal("About HID Tester", &show_about_window, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "HID Tester - A free Joystick Testing App");
+            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "HID Tester - Open Source Utility");
             ImGui::Text("Version: %s", VERSION_STRING);
             ImGui::Separator();
-            ImGui::Text("Created by: ");
-            ImGui::SameLine(0, 5.0f);
-            ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "rhunecke");
-            
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                ImGui::SetTooltip("www.roberthunecke.com");
-            }
-            
-            if (ImGui::IsItemClicked()) {
-                #ifdef _WIN32
-                ShellExecuteA(NULL, "open", "https://www.roberthunecke.com", NULL, NULL, SW_SHOWNORMAL);
-                #endif
-            }
+            ImGui::Text("Developer: rhunecke");
             ImGui::Spacing();
-            ImGui::Text("License: GNU GPL v3.0");
-            ImGui::TextWrapped("This program is free software: you can redistribute it and/or modify it.");
-            ImGui::Spacing();
-
-            if (ImGui::Button("GitHub Project", ImVec2(120, 0))) {
-                #ifdef _WIN32
-                ShellExecuteA(NULL, "open", "https://github.com/rhunecke/HIDTester", NULL, NULL, SW_SHOWNORMAL);
-                #endif
-            }
+            if (ImGui::Button("GitHub", ImVec2(120, 0))) ShellExecuteA(NULL, "open", "https://github.com/rhunecke/HIDTester", NULL, NULL, SW_SHOWNORMAL);
             ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(120, 0))) {
-                show_about_window = false;
-                ImGui::CloseCurrentPopup();
-            }
+            if (ImGui::Button("Close", ImVec2(120, 0))) { show_about_window = false; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
 
-        // --- 2. MAIN CONTENT TABS ---
+        // --- CONTENT ---
         if (ImGui::BeginTabBar("MainTabs")) {
             if (ImGui::BeginTabItem("Live Test")) {
                 if (deviceOpened) {
@@ -264,73 +268,61 @@ int main(int argc, char* argv[]) {
                     auto& state = joyHandler.getState();
 
                     if (showVisualizer && state.axes.size() >= 2) {
-                        ImGui::BeginChild("VisualizerArea", ImVec2(230, 0), true);
-                        ImGui::Text("Stick Monitors");
+                        ImGui::BeginChild("VisualizerArea", ImVec2(240, 0), true);
+                        ImGui::Text("Joystick Mapping");
                         ImGui::Separator();
-                        
-                        std::vector<std::string> labels;
-                        for (int i = 0; i < (int)state.axes.size(); i++) labels.push_back("Axis " + std::to_string(i));
                         
                         auto drawCombo = [&](const char* id, int* idx) {
                             ImGui::SetNextItemWidth(90);
-                            if (ImGui::BeginCombo(id, labels[*idx % labels.size()].c_str())) {
+                            if (ImGui::BeginCombo(id, ("Axis " + std::to_string(*idx)).c_str())) {
                                 for (int i = 0; i < (int)state.axes.size(); i++) {
-                                    if (ImGui::Selectable(labels[i].c_str(), *idx == i)) *idx = i;
+                                    if (ImGui::Selectable(("Axis " + std::to_string(i)).c_str(), *idx == i)) *idx = i;
                                 }
                                 ImGui::EndCombo();
                             }
                         };
 
-                        drawCombo("##X1", &axisX_idx); ImGui::SameLine(); drawCombo("X/Y 1", &axisY_idx);
-                        DrawJoystickMonitor("Primary Stick", state.axes[axisX_idx % state.axes.size()], state.axes[axisY_idx % state.axes.size()], 180.0f);
+                        drawCombo("##X1", &axisX_idx); ImGui::SameLine(); drawCombo("##Y1", &axisY_idx);
+                        DrawJoystickMonitor("Primary Stick", state.axes[axisX_idx % state.axes.size()], state.axes[axisY_idx % state.axes.size()]);
                         
                         if (state.axes.size() >= 4) {
                             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                            drawCombo("##X2", &axisX2_idx); ImGui::SameLine(); drawCombo("X/Y 2", &axisY2_idx);
-                            DrawJoystickMonitor("Secondary Stick", state.axes[axisX2_idx % state.axes.size()], state.axes[axisY2_idx % state.axes.size()], 180.0f);
+                            drawCombo("##X2", &axisX2_idx); ImGui::SameLine(); drawCombo("##Y2", &axisY2_idx);
+                            DrawJoystickMonitor("Secondary Stick", state.axes[axisX2_idx % state.axes.size()], state.axes[axisY2_idx % state.axes.size()]);
                         }
                         ImGui::EndChild();
                         ImGui::SameLine();
                     }
 
                     ImGui::BeginChild("DataDisplay");
-                    ImGui::Text("Analog Values");
-                    for (int i = 0; i < (int)state.axes.size(); i++) {
-                        char buf[32]; sprintf(buf, "Axis %d: %.4f", i, state.axes[i]);
-                        ImGui::ProgressBar((state.axes[i] + 1.0f) / 2.0f, ImVec2(-1, 0), buf);
-                    }
-                    ImGui::Separator();
                     
-                    // --- RESPONSIVE BUTTON WRAPPING ---
-                    ImGui::Text("Buttons");
+                    // Call professional axis visualization
+                    DrawAnalogAxes(state);
+                    
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Buttons");
                     float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
                     for (int i = 0; i < (int)state.buttons.size(); i++) {
                         if (state.buttons[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0.8f, 0.2f, 1));
-                        ImGui::Button(std::to_string(i).c_str(), ImVec2(30, 30));
+                        ImGui::Button(std::to_string(i).c_str(), ImVec2(34, 34));
                         if (state.buttons[i]) ImGui::PopStyleColor();
 
                         float last_button_x2 = ImGui::GetItemRectMax().x;
-                        float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 30.0f;
-                        if (i + 1 < (int)state.buttons.size() && next_button_x2 < window_visible_x2) {
-                            ImGui::SameLine();
-                        }
+                        float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 34.0f;
+                        if (i + 1 < (int)state.buttons.size() && next_button_x2 < window_visible_x2) ImGui::SameLine();
                     }
                     
                     if (!state.hats.empty()) {
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        ImGui::Text("POV Hats (D-Pad)");
-                        ImGui::Spacing();
+                        ImGui::Spacing(); ImGui::Separator();
+                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "POV Hats");
                         for (int i = 0; i < (int)state.hats.size(); i++) {
                             if (i > 0) ImGui::SameLine();
-                            char hatLabel[32];
-                            sprintf(hatLabel, "Hat %d", i);
-                            DrawHatVisualizer(hatLabel, state.hats[i], 70.0f);
+                            DrawHatVisualizer(("Hat " + std::to_string(i)).c_str(), state.hats[i], 80.0f);
                         }
                     }
                     ImGui::EndChild();
                 } else {
-                    ImGui::Text("Please connect and select a joystick.");
+                    ImGui::Text("Ready. Please select a controller to begin testing.");
                 }
                 ImGui::EndTabItem();
             }
@@ -342,26 +334,15 @@ int main(int argc, char* argv[]) {
                     if (axisHistory.size() != state.axes.size()) axisHistory.resize(state.axes.size());
                     
                     ImGui::BeginChild("PlotArea");
-                    
-                    // --- NEW: Calculate dynamic sample count ---
-                    // Multiply the available width by a factor (e.g., 1.5f) 
-                    // if you want the graph to scroll slower.
                     float avail_width = ImGui::GetContentRegionAvail().x;
                     int dynamicMaxSamples = std::max(200, (int)(avail_width * 1.0f)); 
 
                     for (int i = 0; i < (int)state.axes.size(); i++) {
                         axisHistory[i].push_back(state.axes[i]);
-                        
-                        // --- NEW: Use while-loop instead of if ---
-                        // If the window is resized smaller rapidly, we might 
-                        // need to pop multiple old values at once.
-                        while (axisHistory[i].size() > dynamicMaxSamples) {
-                            axisHistory[i].pop_front();
-                        }
+                        while (axisHistory[i].size() > dynamicMaxSamples) axisHistory[i].pop_front();
                         
                         std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
-                        
-                        ImGui::Text("Axis %d", i);
+                        ImGui::Text("Axis %d History", i);
                         ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), data.data(), (int)data.size(), 0, nullptr, -1.0f, 1.0f, ImVec2(-1, 80));
                     }
                     ImGui::EndChild();
@@ -376,7 +357,7 @@ int main(int argc, char* argv[]) {
         ImGui::Render();
         int dw, dh; SDL_GL_GetDrawableSize(window, &dw, &dh);
         glViewport(0, 0, dw, dh);
-        glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+        glClearColor(0.06f, 0.06f, 0.06f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
