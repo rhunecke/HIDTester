@@ -182,7 +182,7 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 
-    SDL_Window* window = SDL_CreateWindow("HID Tester - Pro Controller Testing Utility", 
+    SDL_Window* window = SDL_CreateWindow("HID Tester - A Free Joystick Testing App", 
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 
                                           1280, 900, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
@@ -276,7 +276,7 @@ int main(int argc, char* argv[]) {
         // --- ABOUT MODAL ---
         if (show_about_window) ImGui::OpenPopup("About HID Tester");
         if (ImGui::BeginPopupModal("About HID Tester", &show_about_window, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "HID Tester - Open Source Utility");
+            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "HID Tester - A Free Joystick Testing App");
             ImGui::Text("Version: %s", VERSION_STRING);
             ImGui::Separator();
             ImGui::Text("Developer: rhunecke");
