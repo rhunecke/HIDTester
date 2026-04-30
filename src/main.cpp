@@ -264,7 +264,7 @@ int main(int argc, char* argv[]) {
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            ImGui::Checkbox("Show Monitors", &showVisualizer);
+            ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
             
             ImGui::SameLine(ImGui::GetWindowWidth() - 110);
             if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
