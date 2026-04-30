@@ -17,6 +17,7 @@
 #include <deque>
 #include <algorithm>
 #include "version.h"
+#include <cstdlib> // Required for system() command on Linux/macOS
 
 /**
  * Helper to convert SDL_HAT values to human-readable strings (8-way support)
@@ -96,6 +97,28 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
     ImGui::Dummy(sz);
     ImGui::TextDisabled("%s", GetHatDirString(hatState));
     ImGui::EndGroup();
+}
+
+/**
+ * Opens a web browser with the specified URL across different operating systems.
+ */
+void OpenWebpage(const char* url) {
+#if defined(_WIN32)
+    // Windows specific URL opening
+    ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+    // macOS specific URL opening
+    std::string command = "open ";
+    command += url;
+    system(command.c_str());
+#elif defined(__linux__)
+    // Linux specific URL opening
+    std::string command = "xdg-open ";
+    command += url;
+    system(command.c_str());
+#else
+    std::cout << "URL opening not supported on this platform." << std::endl;
+#endif
 }
 
 /**
@@ -258,9 +281,17 @@ int main(int argc, char* argv[]) {
             ImGui::Separator();
             ImGui::Text("Developer: rhunecke");
             ImGui::Spacing();
-            if (ImGui::Button("GitHub", ImVec2(120, 0))) ShellExecuteA(NULL, "open", "https://github.com/rhunecke/HIDTester", NULL, NULL, SW_SHOWNORMAL);
+            
+            // Use the cross-platform helper instead of Windows-only ShellExecuteA
+            if (ImGui::Button("GitHub", ImVec2(120, 0))) {
+                OpenWebpage("https://github.com/rhunecke/HIDTester");
+            }
+            
             ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(120, 0))) { show_about_window = false; ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("Close", ImVec2(120, 0))) { 
+                show_about_window = false; 
+                ImGui::CloseCurrentPopup(); 
+            }
             ImGui::EndPopup();
         }
 
