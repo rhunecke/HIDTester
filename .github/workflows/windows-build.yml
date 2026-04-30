@@ -1,0 +1,65 @@
+name: Build Windows Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download ImGui
+      run: |
+        mkdir thirdparty
+        git clone --depth 1 https://github.com/ocornut/imgui.git thirdparty/imgui
+
+    - name: Download and Extract SDL2
+      # Download official SDL2 VC development libraries and extract to thirdparty/SDL2
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-2.30.2/SDL2-devel-2.30.2-VC.zip" -OutFile "SDL2.zip"
+        Expand-Archive -Path "SDL2.zip" -DestinationPath "thirdparty"
+        Rename-Item -Path "thirdparty\SDL2-2.30.2" -NewName "SDL2"
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Application
+      run: cmake --build build --config Release -j 4
+
+    - name: Package Release
+      # Using bash shell here to keep the zip/cp syntax consistent with your Linux/macOS workflows
+      shell: bash 
+      run: |
+        VERSION="${{ github.ref_name }}"
+        DIR_NAME="HIDTester-$VERSION-Windows"
+        mkdir -p "$DIR_NAME"
+        
+        # Copy the executable and the SDL2.dll to the distribution folder
+        cp build/Release/HIDTester.exe "$DIR_NAME/"
+        cp build/Release/SDL2.dll "$DIR_NAME/" || true
+        cp README.md "$DIR_NAME/" || true
+        cp LICENSE "$DIR_NAME/" || true
+        
+        # Windows runners use 7z to create zip archives
+        7z a "$DIR_NAME.zip" "$DIR_NAME/"
+
+    - name: Upload Artifact to Actions
+      uses: actions/upload-artifact@v4
+      with:
+        name: HIDTester-${{ github.ref_name }}-Windows
+        path: HIDTester-${{ github.ref_name }}-Windows/
+
+    - name: Upload to GitHub Release
+      if: github.event_name == 'release'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ github.ref_name }} "HIDTester-${{ github.ref_name }}-Windows.zip"
