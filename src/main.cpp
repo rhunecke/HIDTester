@@ -273,24 +273,55 @@ int main(int argc, char* argv[]) {
         }
         ImGui::EndChild();
 
-        // --- ABOUT MODAL ---
-        if (show_about_window) ImGui::OpenPopup("About HID Tester");
+// --- ABOUT MODAL WINDOW ---
+        if (show_about_window) {
+            ImGui::OpenPopup("About HID Tester");
+        }
+        
+        // Center the modal perfectly in the main viewport
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
         if (ImGui::BeginPopupModal("About HID Tester", &show_about_window, ImGuiWindowFlags_AlwaysAutoResize)) {
+            
+            // App Title and Version
             ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "HID Tester - A Free Joystick Testing App");
             ImGui::Text("Version: %s", VERSION_STRING);
             ImGui::Separator();
-            ImGui::Text("Developer: rhunecke");
+            
+            // Developer Info with clickable link
+            ImGui::Text("Developed by: ");
+            ImGui::SameLine(0, 5.0f);
+            ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "rhunecke");
+            
+            // Hover effect and click action for the developer name
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("www.roberthunecke.com");
+            }
+            if (ImGui::IsItemClicked()) {
+                // Use the cross-platform helper instead of Windows-only ShellExecuteA
+                OpenWebpage("https://www.roberthunecke.com");
+            }
+            
             ImGui::Spacing();
             
-            // Use the cross-platform helper instead of Windows-only ShellExecuteA
-            if (ImGui::Button("GitHub", ImVec2(120, 0))) {
+            // License Information
+            ImGui::Text("License: GNU GPL v3.0");
+            ImGui::TextWrapped("This program is free software: you can redistribute it and/or modify it.");
+            ImGui::Spacing();
+
+            // Action Buttons
+            if (ImGui::Button("GitHub Project", ImVec2(120, 0))) {
+                // Use the cross-platform helper for the repository as well
                 OpenWebpage("https://github.com/rhunecke/HIDTester");
             }
             
             ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(120, 0))) { 
-                show_about_window = false; 
-                ImGui::CloseCurrentPopup(); 
+            
+            if (ImGui::Button("Close", ImVec2(120, 0))) {
+                show_about_window = false;
+                ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
