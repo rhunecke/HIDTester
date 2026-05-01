@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
     
     #ifdef __APPLE__
     
-        // macOS REQUIRES Core Profile + newer GLSL
+        // macOS (Arm) REQUIRES Core Profile + newer GLSL
     
         glsl_version = "#version 150";
     
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]) {
     
         
     
-        // macOS verlangt Forward Compatibility
+        // macOS requires Forward Compatibility
     
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 
         
