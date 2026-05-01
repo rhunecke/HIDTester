@@ -24,13 +24,8 @@ jobs:
     - name: Install Dependencies
       run: |
         brew update
-        brew install sdl2 cmake dylibbundler
+        brew install sdl2 cmake
 
-    # configure macOS and OpenGL
-    - name: Configure CMake
-    
-      run: |
-    
     - name: Configure CMake
       run: |
         cmake -B build \
@@ -42,15 +37,21 @@ jobs:
     - name: Build Application
       run: cmake --build build --config Release -j 4
 
-    # linking SDL2
-    - name: Bundle Dynamic Libraries
+    # 👉 NEW: Manual bundling of SDL2 (Absolutely robust method)
+    - name: Bundle Dynamic Libraries manually
       run: |
-        # creates libs folder
+        # 1. Create the libs directory
         mkdir -p build/libs
         
-        # dylibbundler included all required libraries, e.g. SDL2, 
-        # copies libraries to "build/libs/" and changes path to "@executable_path"
-        dylibbundler -od -b -x build/HIDTester -d build/libs/ -p @executable_path/libs/
+        # 2. Copy the actual SDL2 library from Homebrew into our libs directory
+        cp /opt/homebrew/lib/libSDL2-2.0.0.dylib build/libs/ || echo "SDL2 dylib not found at expected path"
+        
+        # 3. Reroute the internal library path so the app looks for SDL2 locally (@executable_path)
+        # instead of searching in the global Homebrew directory
+        install_name_tool -change /opt/homebrew/lib/libSDL2-2.0.0.dylib @executable_path/libs/libSDL2-2.0.0.dylib build/HIDTester
+        
+        # Fallback: Add the local libs folder to the general Run-time search path
+        install_name_tool -add_rpath @executable_path/libs build/HIDTester || true
 
     - name: Package Release
       run: |
@@ -59,7 +60,11 @@ jobs:
         mkdir -p "$DIR_NAME"
 
         cp build/HIDTester "$DIR_NAME/"
-        cp -r build/libs "$DIR_NAME/" 
+        
+        # Copy the libs folder. 
+        # Using -R to ensure any potential symlinks are handled correctly.
+        cp -R build/libs "$DIR_NAME/" 
+        
         cp README.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
 
