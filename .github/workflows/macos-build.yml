@@ -3,7 +3,7 @@ name: Build macOS Release
 on:
   release:
     types: [created]
-  workflow_dispatch: # Allows manual testing
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,9 +11,6 @@ permissions:
 jobs:
   build-macos:
     runs-on: macos-latest
-    env:
-      # Ensure modern Node version for the runner
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     - name: Checkout Code
@@ -29,25 +26,34 @@ jobs:
         brew update
         brew install sdl2 cmake
 
+    # 👉 WICHTIG: macOS + OpenGL richtig konfigurieren
     - name: Configure CMake
-      # We define the build type and ensure SDL2 is found via standard brew paths
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+          -DCMAKE_PREFIX_PATH="/opt/homebrew;/usr/local"
 
     - name: Build Application
       run: cmake --build build --config Release -j 4
+
+    # 👉 Optional: SDL2 korrekt verlinken (verhindert Runtime-Fehler)
+    - name: Fix SDL2 linkage
+      run: |
+        install_name_tool -add_rpath /opt/homebrew/lib build/HIDTester || true
+        install_name_tool -add_rpath /usr/local/lib build/HIDTester || true
 
     - name: Package Release
       run: |
         VERSION="${{ github.ref_name }}"
         DIR_NAME="HIDTester-$VERSION-macOS"
         mkdir -p "$DIR_NAME"
-        
-        # Copy binary and metadata
+
         cp build/HIDTester "$DIR_NAME/"
         cp README.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
-        
-        # Zip the folder for distribution
+
         zip -r "$DIR_NAME.zip" "$DIR_NAME/"
 
     - name: Upload Artifact to Actions
