@@ -207,9 +207,42 @@ int main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) return -1;
 
     const char* glsl_version = "#version 130";
-    // --- Set OpenGL context version ---
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    
+    // --- Platform-specific OpenGL setup ---
+    
+    #ifdef __APPLE__
+    
+        // macOS REQUIRES Core Profile + newer GLSL
+    
+        glsl_version = "#version 150";
+    
+        
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    
+        
+    
+        // macOS verlangt Forward Compatibility
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 
+        
+            SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG | SDL_GL_CONTEXT_DEBUG_FLAG
+        
+        );
+    
+    #else
+    
+        // Windows / Linux
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    
+    #endif
 
     SDL_Window* window = SDL_CreateWindow("HID Tester - A Free Joystick Testing App", 
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 
