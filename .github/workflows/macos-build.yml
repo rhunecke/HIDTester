@@ -37,7 +37,7 @@ jobs:
     - name: Build Application
       run: cmake --build build --config Release -j 4
 
-    # 👉 NEW: Manual bundling of SDL2 (Absolutely robust method)
+    # Manual bundling of SDL2
     - name: Bundle Dynamic Libraries manually
       run: |
         # 1. Create the libs directory
