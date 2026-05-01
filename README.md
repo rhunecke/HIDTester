@@ -3,7 +3,7 @@
 A lightweight, high-performance tool designed to test generic USB game controllers, joysticks, and button boxes across **Windows, Linux, and macOS**. Built for gamers, sim-racing/flight-sim enthusiasts, and hardware developers to analyze axis precision, button inputs, and signal curves in real-time.
 
 ## ✨ Features
-* **Cross-Platform:** Native support for Windows, Linux, and macOS.
+* **Cross-Platform:** Native support for Windows, Linux, and macOS (Apple Silicon / ARM64).
 * **Axis Data:** Displays both normalized float values and exact 16-bit SDL-scaled raw integers (-32768 to 32767) to easily detect sensor jitter, drift, or deadzone irregularities.
 * **Stick Monitors:** Visualize primary and secondary analog stick movements on a clean 2D coordinate system.
 * **Axis Curves:** Live time-series graphs for all analog axes that dynamically adapt to your screen size.
@@ -21,7 +21,7 @@ Head over to the [Releases Page](https://github.com/rhunecke/HIDTester/releases)
 
 * **Windows:** Extract and run `HIDTester.exe` (ensure `SDL2.dll` is in the same folder).
 * **Linux:** Extract and run the `HIDTester` executable.
-* **macOS:** Extract and run the `HIDTester` executable.
+* **macOS:** Extract and run the `HIDTester` executable. Dynamic libraries (like SDL2) are now pre-bundled, so no external installations are required via Homebrew.
 
 ---
 
@@ -41,7 +41,7 @@ Depending on your operating system, install the required build tools:
   * `sudo apt-get install cmake g++ libsdl2-dev libgl1-mesa-dev`
 * **macOS:**
   * `brew update`
-  * `brew install cmake sdl2`
+  * `brew install cmake sdl2 dylibbundler`
 
 ### 2. Prepare Dependencies (Windows & All Platforms)
 
@@ -61,7 +61,6 @@ Create a `thirdparty` folder in the project root.
 ### 3. Build Process
 
 You can use the CMake integration in VS Code or the standard command line:
-
 ```bash
 mkdir build
 cd build
