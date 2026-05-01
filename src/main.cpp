@@ -123,22 +123,20 @@ void OpenWebpage(const char* url) {
 
 /**
  * Visualizes Analog Axes with ProgressBars.
- * Displays both normalized float and the 16-bit SDL-scaled integer.
+ * Displays both the smoothed logical value and the raw 16-bit hardware data.
+ * Allows toggling between Bidirectional (Stick) and Unidirectional (Trigger) modes.
  */
-void DrawAnalogAxes(const JoystickState& state) {
+void DrawAnalogAxes(JoystickHandler& joyHandler) {
+    const JoystickState& state = joyHandler.getState();
     int numAxes = (int)state.sdlAxes.size();
     
     if (numAxes > 0) {
-        // Transparent UI labeling
-        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Analog Axes (SDL 16-bit Scaled)");
+        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Analog Axes (Logical vs. Hardware)");
         
-        // Hover tooltip to educate users about hardware vs. API resolution
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
-                "Note: Generic HID APIs (like SDL/DirectInput) automatically scale all\n"
-                "hardware sensor data to a 16-bit range (-32768 to 32767).\n"
-                "If your device has an 8-bit or 10-bit ADC (like an Arduino Leonardo),\n"
-                "these numbers are upscaled and will jump in larger increments."
+                "Use the 'Trg' checkbox if an axis rests at its minimum value (e.g. Xbox RT/LT).\n"
+                "The progress bar shows the smoothed logical input (respecting your deadzone)."
             );
         }
         
@@ -146,30 +144,61 @@ void DrawAnalogAxes(const JoystickState& state) {
         ImGui::Spacing();
 
         for (int i = 0; i < numAxes; i++) {
-            // Retrieve the 16-bit value scaled by SDL
-            int16_t sdlValue = state.sdlAxes[i];
-            float floatValue = state.axes[i];
-            
-            float normalizedLength = (static_cast<float>(sdlValue) + 32768.0f) / 65535.0f;
+            // ImGui needs a unique ID for repeating elements in a loop to track clicks properly
+            ImGui::PushID(i);
 
             ImGui::Text("Axis %d:", i);
-            ImGui::SameLine(70);
+            ImGui::SameLine(60);
 
-            ImVec4 barColor = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
-            if (std::abs(sdlValue) > 1000) {
-                barColor = ImVec4(0.0f, 0.8f, 0.3f, 1.0f);
+            // Toggle Switch for Trigger Mode
+            bool isTrigger = joyHandler.isAxisTrigger(i);
+            if (ImGui::Checkbox("Trg", &isTrigger)) {
+                joyHandler.setAxisTriggerMode(i, isTrigger);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Check if this is a Trigger/Throttle (rests at minimum).");
             }
 
+            ImGui::SameLine(115);
+
+            // Raw hardware value (will jitter naturally)
+            int16_t rawSdlValue = state.sdlAxes[i];
+            
+            // Smoothed logical value with deadzone applied
+            float smoothedFloat = state.axes[i]; 
+            
+            float barFillLength = 0.0f;
+            ImVec4 barColor = ImVec4(0.2f, 0.6f, 0.2f, 1.0f); // Default inactive color
+
+            if (isTrigger) {
+                // Visual logic for Triggers (Starts at 0.0, goes to 1.0)
+                barFillLength = smoothedFloat; 
+                // Highlight if actively pressed
+                if (smoothedFloat > 0.01f) { 
+                    barColor = ImVec4(0.0f, 0.8f, 0.3f, 1.0f);
+                }
+            } else {
+                // Visual logic for Sticks (Starts at center, maps -1.0 -> 1.0 to 0.0 -> 1.0)
+                barFillLength = (smoothedFloat + 1.0f) * 0.5f;
+                // Highlight if pushed out of the center deadzone
+                if (std::abs(smoothedFloat) > 0.05f) { 
+                    barColor = ImVec4(0.0f, 0.8f, 0.3f, 1.0f);
+                }
+            }
+
+            // Draw the progress bar with the smoothed float text overlay
             char overlayText[32];
-            snprintf(overlayText, sizeof(overlayText), "%.4f", floatValue);
+            snprintf(overlayText, sizeof(overlayText), "%.4f", smoothedFloat);
 
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-            ImGui::ProgressBar(normalizedLength, ImVec2(-60, 16), overlayText); 
+            ImGui::ProgressBar(barFillLength, ImVec2(-60, 16), overlayText); 
             ImGui::PopStyleColor();
 
-            // Display the exact integer value provided by the API
+            // Display the exact raw integer value provided by the API
             ImGui::SameLine();
-            ImGui::TextDisabled("%6d", sdlValue);
+            ImGui::TextDisabled("%6d", rawSdlValue);
+
+            ImGui::PopID(); // End of unique ID context
         }
     }
 }
@@ -219,15 +248,17 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     JoystickHandler joyHandler;
-    static int selectedDevice = 0;
+    
+    // --- Force explicit selection ---
+    // Start with -1 to indicate no device is currently selected.
+    static int selectedDevice = -1; 
+    
     static int axisX_idx = 0, axisY_idx = 1, axisX2_idx = 2, axisY2_idx = 3;
     static bool showVisualizer = true;
     static bool show_about_window = false; 
     bool deviceOpened = false;
 
     std::vector<std::deque<float>> axisHistory;
-
-    if (SDL_NumJoysticks() > 0) deviceOpened = joyHandler.open(selectedDevice);
 
     bool done = false;
     while (!done) {
@@ -251,20 +282,61 @@ int main(int argc, char* argv[]) {
             ImGui::Text("Device:");
             ImGui::SetNextItemWidth(300);
             int nJoysticks = SDL_NumJoysticks();
-            const char* currentName = (nJoysticks > 0) ? SDL_JoystickNameForIndex(selectedDevice) : "No Device Detected";
+            
+            // --- Dynamic Dropdown Label ---
+            const char* currentName = "Select a device...";
+            if (nJoysticks == 0) {
+                currentName = "No Device Detected";
+            } else if (selectedDevice >= 0 && selectedDevice < nJoysticks) {
+                // Only show a device name if the user has actively selected a valid index
+                currentName = SDL_JoystickNameForIndex(selectedDevice);
+            }
             
             if (ImGui::BeginCombo("##DeviceSelector", currentName)) {
                 for (int i = 0; i < nJoysticks; i++) {
-                    if (ImGui::Selectable(SDL_JoystickNameForIndex(i), selectedDevice == i)) {
+                    // Highlight the currently selected item in the dropdown list
+                    bool isSelected = (selectedDevice == i);
+                    
+                    if (ImGui::Selectable(SDL_JoystickNameForIndex(i), isSelected)) {
                         selectedDevice = i;
                         deviceOpened = joyHandler.open(selectedDevice);
                         axisHistory.clear(); 
                     }
+                    
+                    // Set the initial focus when opening the combo (scrolling to the active item)
+                    if (isSelected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
                 }
                 ImGui::EndCombo();
             }
-            ImGui::SameLine();
+            ImGui::SameLine(0.0f, 30.0f);
             ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
+
+            // --- Float/Raw Deadzone Slider ---
+            ImGui::SameLine(0.0f, 30.0f);
+            static float deadzoneFloat = 0.0f; // Range: 0.0 to 0.25 (0% to 25%)
+            
+            ImGui::SetNextItemWidth(120);
+            
+            // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
+            // are strictly clamped between our min (0.0f) and max (0.25f) limits.
+            if (ImGui::SliderFloat("Deadzone", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
+                // Convert the float representation back to the 16-bit hardware scale (0 to 32767)
+                int16_t rawLimit = static_cast<int16_t>(deadzoneFloat * 32767.0f);
+                joyHandler.setDeadzone(rawLimit);
+            }
+
+            // Combined Tooltip with clear UI instructions for manual input
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Filters out small axis movements near the center to prevent jitter.\n"
+                                  "Shown as normalized float (e.g., 0.100 = 10%%) and raw 16-bit integer.\n"
+                                  "[Tip: CTRL+Click on the slider to type an exact value]");
+            }
+            
+            // Display the exact raw hardware value next to it for diagnostics
+            ImGui::SameLine();
+            ImGui::TextDisabled("(Raw: %d)", static_cast<int>(deadzoneFloat * 32767.0f));
             
             ImGui::SameLine(ImGui::GetWindowWidth() - 110);
             if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
@@ -359,8 +431,8 @@ int main(int argc, char* argv[]) {
 
                     ImGui::BeginChild("DataDisplay");
                     
-                    // Call professional axis visualization
-                    DrawAnalogAxes(state);
+                    // Call professional axis visualization passing the handler reference
+                    DrawAnalogAxes(joyHandler);
                     
                     ImGui::Separator();
                     ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Buttons");
@@ -390,7 +462,7 @@ int main(int argc, char* argv[]) {
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Axis Curves")) {
+if (ImGui::BeginTabItem("Axis Curves")) {
                 if (deviceOpened) {
                     joyHandler.update();
                     auto& state = joyHandler.getState();
@@ -405,10 +477,32 @@ int main(int argc, char* argv[]) {
                         while (axisHistory[i].size() > dynamicMaxSamples) axisHistory[i].pop_front();
                         
                         std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
-                        ImGui::Text("Axis %d History", i);
-                        ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), data.data(), (int)data.size(), 0, nullptr, -1.0f, 1.0f, ImVec2(-1, 80));
+                        
+                        // --- NEW: Dynamic graph scaling based on axis type ---
+                        bool isTrigger = joyHandler.isAxisTrigger(i);
+                        float scale_min = isTrigger ? 0.0f : -1.0f; // Triggers start at 0.0, Sticks at -1.0
+                        float scale_max = 1.0f;                     // Both max out at 1.0
+                        
+                        // Update the text label to clearly show if the graph is in Trigger mode
+                        std::string labelText = "Axis " + std::to_string(i) + " History";
+                        if (isTrigger) {
+                            labelText += " (Trigger Mode: 0.0 to 1.0)";
+                        } else {
+                            labelText += " (Stick Mode: -1.0 to 1.0)";
+                        }
+                        
+                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "%s", labelText.c_str());
+                        
+                        // Pass the dynamic scale limits to the PlotLines function
+                        ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), 
+                                         data.data(), (int)data.size(), 0, nullptr, 
+                                         scale_min, scale_max, ImVec2(-1, 80));
+                                         
+                        ImGui::Spacing(); // Add a little breathing room between graphs
                     }
                     ImGui::EndChild();
+                } else {
+                    ImGui::Text("Ready. Please select a controller to begin testing.");
                 }
                 ImGui::EndTabItem();
             }
