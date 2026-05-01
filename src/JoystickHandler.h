@@ -2,7 +2,8 @@
 #include <SDL.h>
 #include <vector>
 #include <string>
-#include <cmath> // Required for std::abs
+#include <cmath>     // Required for std::abs
+#include <algorithm> // Required for std::max
 
 // --- Data Model for the Joystick State ---
 struct JoystickState {
@@ -63,12 +64,17 @@ public:
             for (int i = 0; i < numAxes; i++) {
                 int16_t initialVal = SDL_JoystickGetAxis(joystick, i);
                 
-                // If the axis is physically resting at its absolute minimum 
-                // (or very close to it to account for hardware jitter) upon connection, 
-                // it is highly likely a unidirectional trigger or throttle.
+#ifndef __APPLE__
+                // Windows & Linux: Triggers rest at absolute minimum (-32768).
+                // Sticks rest at center (0). We can safely auto-detect.
                 if (initialVal <= -32000) {
                     state.axisIsTrigger[i] = true;
                 }
+#else
+                // macOS: Both Triggers and Sticks rest at 0.
+                // It is impossible to safely distinguish them just by looking at the initial value.
+                // We leave it false. The macOS user must manually check the "Trg" box in the UI.
+#endif
             }
             
             return true;
@@ -99,11 +105,19 @@ public:
                 // TRIGGER LOGIC (Unidirectional: 0.0 to 1.0)
                 // ==========================================
                 
-                // 1. Normalize raw value to a float between 0.0f and 1.0f
-                float normalizedValue = (rawSdlValue + 32768.0f) / 65535.0f;
-                
-                // 2. Normalize the deadzone limit to the 0.0 - 1.0 scale
-                float dzFloat = deadzoneLimit / 65535.0f;
+                float normalizedValue = 0.0f;
+                float dzFloat = 0.0f;
+
+#ifdef __APPLE__
+                // macOS API reports triggers purely from 0 to 32767.
+                // std::max ensures slight negative jitter around 0 doesn't break the math.
+                normalizedValue = std::max(0.0f, (float)rawSdlValue) / 32767.0f;
+                dzFloat = deadzoneLimit / 32767.0f;
+#else
+                // Windows/Linux API reports triggers from -32768 to 32767.
+                normalizedValue = (rawSdlValue + 32768.0f) / 65535.0f;
+                dzFloat = deadzoneLimit / 65535.0f;
+#endif
                 
                 float finalOutput = 0.0f;
                 
