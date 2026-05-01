@@ -24,9 +24,9 @@ jobs:
     - name: Install Dependencies
       run: |
         brew update
-        brew install sdl2 cmake
+        brew install sdl2 cmake dylibbundler
 
-    # 👉 WICHTIG: macOS + OpenGL richtig konfigurieren
+    # configure macOS and OpenGL
     - name: Configure CMake
     
       run: |
@@ -42,11 +42,15 @@ jobs:
     - name: Build Application
       run: cmake --build build --config Release -j 4
 
-    # 👉 Optional: SDL2 korrekt verlinken (verhindert Runtime-Fehler)
-    - name: Fix SDL2 linkage
+    # linking SDL2
+    - name: Bundle Dynamic Libraries
       run: |
-        install_name_tool -add_rpath /opt/homebrew/lib build/HIDTester || true
-        install_name_tool -add_rpath /usr/local/lib build/HIDTester || true
+        # creates libs folder
+        mkdir -p build/libs
+        
+        # dylibbundler included all required libraries, e.g. SDL2, 
+        # copies libraries to "build/libs/" and changes path to "@executable_path"
+        dylibbundler -od -b -x build/HIDTester -d build/libs/ -p @executable_path/libs/
 
     - name: Package Release
       run: |
@@ -55,6 +59,7 @@ jobs:
         mkdir -p "$DIR_NAME"
 
         cp build/HIDTester "$DIR_NAME/"
+        cp -r build/libs "$DIR_NAME/" 
         cp README.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
 
