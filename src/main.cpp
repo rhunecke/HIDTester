@@ -54,6 +54,18 @@ void DrawJoystickMonitor(const char* label, float axisX, float axisY, float size
     draw_list->AddLine(ImVec2(p0.x, center.y), ImVec2(p1.x, center.y), IM_COL32(60, 60, 60, 255));
     draw_list->AddLine(ImVec2(center.x, p0.y), ImVec2(center.x, p1.y), IM_COL32(60, 60, 60, 255));
     
+#ifdef __APPLE__
+    // macOS Apple Frameworks interpret "Up" as positive. 
+    // Since ImGui draws the Y-axis from top to bottom (0 is top), 
+    // we must invert the visual signal for Mac users, 
+    // WITHOUT altering the real raw data in the progress bars.
+    axisY = -axisY; 
+    
+    // Note: If the X-axis is also mirrored on Mac during your tests 
+    // (Left/Right flipped), you can uncomment the following line:
+    // axisX = -axisX;
+#endif
+
     ImVec2 dot_pos = ImVec2(center.x + (axisX * sz.x * 0.5f), center.y + (axisY * sz.y * 0.5f));
     draw_list->AddCircleFilled(dot_pos, 6.0f, IM_COL32(0, 0, 0, 150));
     draw_list->AddCircleFilled(dot_pos, 5.0f, IM_COL32(0, 255, 100, 255));
@@ -495,7 +507,7 @@ int main(int argc, char* argv[]) {
                 ImGui::EndTabItem();
             }
 
-if (ImGui::BeginTabItem("Axis Curves")) {
+            if (ImGui::BeginTabItem("Axis Curves")) {
                 if (deviceOpened) {
                     joyHandler.update();
                     auto& state = joyHandler.getState();
