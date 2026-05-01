@@ -5,9 +5,11 @@ A lightweight, high-performance tool designed to test generic USB game controlle
 ## ✨ Features
 * **Cross-Platform:** Native support for Windows, Linux, and macOS.
 * **Axis Data:** Displays both normalized float values and exact 16-bit SDL-scaled raw integers (-32768 to 32767) to easily detect sensor jitter, drift, or deadzone irregularities.
-* **Real-Time Monitors:** Visualize primary and secondary analog stick movements on a clean 2D coordinate system.
+* **Stick Monitors:** Visualize primary and secondary analog stick movements on a clean 2D coordinate system.
 * **Axis Curves:** Live time-series graphs for all analog axes that dynamically adapt to your screen size.
 * **Button & POV Hat Check:** Clear overview of all digital inputs and an 8-way radar-style D-Pad visualizer.
+* **Adjustable Software Deadzone:** Filter out hardware jitter instantly.
+* **Trigger & Throttle Checkbox:** Defining an axis as unidirectional.
 * **Modern UI & High Performance:** Minimal CPU footprint, powered by a clean MVC architecture, SDL2, OpenGL 3, and Dear ImGui.
 
 ---
