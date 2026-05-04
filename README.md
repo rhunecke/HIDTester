@@ -70,23 +70,22 @@ cmake --build . --config Release
 *(On Windows, CMake will automatically copy the required `SDL2.dll` to your output directory next to the executable).*
 
 ---
-## ⚠️ Platform Specific Limitations
+## ⚠️ Platform Specific Limitations & Quirks
 
-### Windows Axis and POV hat Limitation
+When testing high-end sim gear or building your own DIY controllers, please be aware of the following platform and API limitations. These are operating system restrictions, not bugs in HID Tester!
 
-Please note that due to how that Windows is limited to a maximum of 8 axes per device. 
+### Windows: 8 Axes & 4 POV Hats Limit
+Due to legacy constraints within Microsoft's DirectInput API (which most generic controllers and SDL2 fall back to), Windows is limited to a maximum of **8 analog axes** and **4 POV hats** per device. 
+If your controller features more inputs than this, Windows will simply ignore them. 
+* **Workaround:** Configure your hardware/firmware to expose itself as multiple virtual controllers (e.g., two devices with 8 axes / 4 POV hats each) to ensure full compatibility.
 
-If your controller has more than 8 axes or more than 4 POV hats, the additional inputs will not be recognized by Windows and will therefore not show up in this application. This is a platform-specific limitation and not a bug in HID Tester.
+### Linux: 80 Buttons Limit
+Due to how the Linux Kernel (specifically `evdev` and `joydev` legacy mappings) handles game controllers, there is a hard limit of **80 buttons per device** (ID 0 - 79). 
+Any inputs exceeding this ID will not be recognized by the Linux system and will therefore not show up in this application. 
+* **Workaround:** For high-button-count DIY button boxes, split the firmware configuration into two separate virtual controllers (e.g., 64 buttons each).
 
-**Workaround:** For high-axis-count devices or devices with more than 4 POV hats, it is recommended to configure the hardware/firmware as two separate virtual controllers (e.g., 8 axes / 4 POV hats each) to ensure full compatibility across all operating systems.
-
-### Linux Button Limitation
-
-Please note that due to how the Linux Kernel (`evdev`) handles game controllers, there is a default limit of **80 buttons per device** (ID 0 - 79). 
-
-If your controller has more than 80 buttons, the additional inputs will not be recognized by the Linux system and will therefore not show up in this application. This is a platform-specific limitation of the kernel's input system and not a bug in HID Tester.
-
-**Workaround:** For high-button-count devices like DIY button boxes, it is recommended to configure the hardware/firmware as two separate virtual controllers (e.g., 64 buttons each) to ensure full compatibility across all operating systems.
+### General Note: The "32-Button" Game Engine Limit
+While Windows can technically read up to 128 buttons per device (and HID Tester will happily display them!), **many older games and flight sims cap out at 32 buttons**. They store button states in a 32-bit integer, meaning any button from #33 upwards won't register in the game, even if HID Tester sees it perfectly fine. Keep this in mind when mapping your DIY button boxes!
 
 ---
 
