@@ -72,13 +72,13 @@ cmake --build . --config Release
 ---
 ## ⚠️ Platform Specific Limitations
 
-### Windows Axis Limitation
+### Windows Axis and POV hat Limitation
 
 Please note that due to how that Windows is limited to a maximum of 8 axes per device. 
 
-If your controller has more than 8 axes, the additional inputs will not be recognized by Windows and will therefore not show up in this application. This is a platform-specific limitation and not a bug in HID Tester.
+If your controller has more than 8 axes or more than 4 POV hats, the additional inputs will not be recognized by Windows and will therefore not show up in this application. This is a platform-specific limitation and not a bug in HID Tester.
 
-**Workaround:** For high-axis-count devices, it is recommended to configure the hardware/firmware as two separate virtual controllers (e.g., 8 axes each) to ensure full compatibility across all operating systems.
+**Workaround:** For high-axis-count devices or devices with more than 4 POV hats, it is recommended to configure the hardware/firmware as two separate virtual controllers (e.g., 8 axes / 4 POV hats each) to ensure full compatibility across all operating systems.
 
 ### Linux Button Limitation
 
