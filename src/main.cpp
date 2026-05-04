@@ -345,7 +345,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::deque<float>> axisHistory;
 
     // --- State variables for Axis Curves and Macro Log ---
-    static int maxSamples = 200;      // Controls speed / time window
+    static int maxSamples = 500;      // Controls speed / time window
     static float zoomLevel = 1.0f;    // Controls Y-axis zoom
     
     std::vector<InputEvent> eventLog;
@@ -657,7 +657,7 @@ int main(int argc, char* argv[]) {
                     
                     // --- UI Controls for Graph Tweaking ---
                     ImGui::SetNextItemWidth(200);
-                    ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1000, "%d samples");
+                    ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1500, "%d samples");
                     
                     // Tooltip for the Speed/Samples slider
                     if (ImGui::IsItemHovered()) {

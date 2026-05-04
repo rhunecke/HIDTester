@@ -6,11 +6,23 @@ A lightweight, high-performance tool designed to test generic USB game controlle
 * **Cross-Platform:** Native support for Windows, Linux, and macOS (Apple Silicon / ARM64).
 * **Axis Data:** Displays both normalized float values and exact 16-bit SDL-scaled raw integers (-32768 to 32767) to easily detect sensor jitter, drift, or deadzone irregularities.
 * **Stick Monitors:** Visualize primary and secondary analog stick movements on a clean 2D coordinate system.
-* **Axis Curves:** Live time-series graphs for all analog axes that dynamically adapt to your screen size.
-* **Button & POV Hat Check:** Clear overview of all digital inputs and an 8-way radar-style D-Pad visualizer.
+* **Dynamic Axis Curves:** Live time-series graphs for all analog axes with adjustable "Speed" (time window) and "Zoom" controls to easily detect hardware jitter, drift, or deadzone issues.
+* **Unified Event Log:** Chronologically tracks button presses and POV hat movements (with precise degrees) and exact millisecond hold-durations.
+* **Button & POV Hat Check:** Clear overview of all digital inputs and an 8-way radar-style D-Pad visualizer that also displays degree angles.
 * **Adjustable Software Deadzone:** Filter out hardware jitter instantly.
 * **Trigger & Throttle Checkbox:** Defining an axis as unidirectional.
 * **Modern UI & High Performance:** Minimal CPU footprint, powered by a clean MVC architecture, SDL2, OpenGL 3, and Dear ImGui.
+
+---
+
+## 🚀 Download & Use (No Installation Required)
+
+If you just want to use the application, you **do not** need to build it from source! 
+Head over to the [Releases Page](https://github.com/rhunecke/HIDTester/releases) and download the latest `.zip` file for your operating system. 
+
+* **Windows:** Extract and run `HIDTester.exe` (ensure `SDL2.dll` is in the same folder).
+* **Linux:** Extract and run the `HIDTester` executable.
+* **macOS:** Extract and run the `HIDTester` executable. Dynamic libraries (like SDL2) are now pre-bundled, so no external installations are required via Homebrew.
 
 ---
 
