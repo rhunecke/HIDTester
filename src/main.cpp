@@ -18,6 +18,8 @@
 #include <algorithm>
 #include "version.h"
 #include <cstdlib> // Required for system() command on Linux/macOS
+#include <chrono>  // Required for Macro Event Log timing
+#include <map>     // Required for tracking button states
 
 /**
  * Helper to convert SDL_HAT values to human-readable strings (8-way support)
@@ -215,6 +217,12 @@ void DrawAnalogAxes(JoystickHandler& joyHandler) {
     }
 }
 
+// --- Data structure for the macro event log ---
+struct ButtonEvent {
+    int buttonIndex;
+    double durationMs;
+};
+
 int main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) return -1;
 
@@ -305,6 +313,13 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::deque<float>> axisHistory;
 
+    // --- State variables for Axis Curves and Macro Log ---
+    static int maxSamples = 200;      // Controls speed / time window
+    static float zoomLevel = 1.0f;    // Controls Y-axis zoom
+    
+    std::vector<ButtonEvent> eventLog;
+    std::map<int, std::chrono::steady_clock::time_point> pressTimestamps;
+
     bool done = false;
     while (!done) {
         SDL_Event event;
@@ -316,6 +331,40 @@ int main(int argc, char* argv[]) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // --- Data Update Layer (Runs before UI rendering for continuous tracking) ---
+        if (deviceOpened) {
+            joyHandler.update();
+            const auto& state = joyHandler.getState();
+            
+            // 1. Process Event Log for Buttons
+            for (int i = 0; i < (int)state.buttons.size(); i++) {
+                bool isDown = state.buttons[i];
+                bool wasDown = (pressTimestamps.find(i) != pressTimestamps.end());
+
+                if (isDown && !wasDown) {
+                    pressTimestamps[i] = std::chrono::steady_clock::now();
+                } else if (!isDown && wasDown) {
+                    auto pressTime = pressTimestamps[i];
+                    auto releaseTime = std::chrono::steady_clock::now();
+                    std::chrono::duration<double, std::milli> elapsed = releaseTime - pressTime;
+
+                    eventLog.push_back({i, elapsed.count()});
+                    // Keep log size manageable
+                    if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
+                    pressTimestamps.erase(i);
+                }
+            }
+
+            // 2. Process Axis History
+            if (axisHistory.size() != state.axes.size()) axisHistory.resize(state.axes.size());
+            for (int i = 0; i < (int)state.axes.size(); i++) {
+                axisHistory[i].push_back(state.axes[i]);
+                while (axisHistory[i].size() > static_cast<size_t>(maxSamples)) {
+                    axisHistory[i].pop_front();
+                }
+            }
+        }
 
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(io.DisplaySize);
@@ -339,16 +388,22 @@ int main(int argc, char* argv[]) {
             
             if (ImGui::BeginCombo("##DeviceSelector", currentName)) {
                 for (int i = 0; i < nJoysticks; i++) {
-                    // Highlight the currently selected item in the dropdown list
                     bool isSelected = (selectedDevice == i);
                     
-                    if (ImGui::Selectable(SDL_JoystickNameForIndex(i), isSelected)) {
+                    // Fix for devices sharing the sam ename, e.g. vJoy
+                    // Append "##" and the index to create a unique ImGui ID
+                    // The user will only see "vJoy Device", but ImGui sees "vJoy Device##0"
+                    std::string deviceName = SDL_JoystickNameForIndex(i);
+                    std::string uniqueLabel = deviceName + "##" + std::to_string(i);
+                    
+                    if (ImGui::Selectable(uniqueLabel.c_str(), isSelected)) {
                         selectedDevice = i;
                         deviceOpened = joyHandler.open(selectedDevice);
                         axisHistory.clear(); 
+                        eventLog.clear(); // Clear macro tracking on device switch
+                        pressTimestamps.clear();
                     }
                     
-                    // Set the initial focus when opening the combo (scrolling to the active item)
                     if (isSelected) {
                         ImGui::SetItemDefaultFocus();
                     }
@@ -444,8 +499,7 @@ int main(int argc, char* argv[]) {
         if (ImGui::BeginTabBar("MainTabs")) {
             if (ImGui::BeginTabItem("Live Test")) {
                 if (deviceOpened) {
-                    joyHandler.update();
-                    auto& state = joyHandler.getState();
+                    const auto& state = joyHandler.getState();
 
                     if (showVisualizer && state.axes.size() >= 2) {
                         ImGui::BeginChild("VisualizerArea", ImVec2(240, 0), true);
@@ -507,44 +561,78 @@ int main(int argc, char* argv[]) {
                 ImGui::EndTabItem();
             }
 
+
             if (ImGui::BeginTabItem("Axis Curves")) {
                 if (deviceOpened) {
-                    joyHandler.update();
-                    auto& state = joyHandler.getState();
-                    if (axisHistory.size() != state.axes.size()) axisHistory.resize(state.axes.size());
                     
+                    // REMOVED: joyHandler.update();
+                    // REMOVED: axisHistory push_back / pop_front logic. 
+                    // Data tracking is now running continuously in the background.
+
+                    const auto& state = joyHandler.getState();
+                    
+                    // --- UI Controls for Graph Tweaking ---
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1000, "%d samples");
+                    ImGui::SameLine(0, 30.0f);
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::SliderFloat("Zoom (Y-Axis)", &zoomLevel, 0.05f, 1.0f, "%.2f");
+                    
+                    ImGui::Separator();
                     ImGui::BeginChild("PlotArea");
-                    float avail_width = ImGui::GetContentRegionAvail().x;
-                    int dynamicMaxSamples = std::max(200, (int)(avail_width * 1.0f)); 
 
                     for (int i = 0; i < (int)state.axes.size(); i++) {
-                        axisHistory[i].push_back(state.axes[i]);
-                        while (axisHistory[i].size() > dynamicMaxSamples) axisHistory[i].pop_front();
                         
+                        // Fetch the data directly from the globally updated history buffer
                         std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
                         
-                        // --- NEW: Dynamic graph scaling based on axis type ---
                         bool isTrigger = joyHandler.isAxisTrigger(i);
-                        float scale_min = isTrigger ? 0.0f : -1.0f; // Triggers start at 0.0, Sticks at -1.0
-                        float scale_max = 1.0f;                     // Both max out at 1.0
+                        float scale_min = isTrigger ? 0.0f : -zoomLevel; 
+                        float scale_max = zoomLevel;                     
                         
-                        // Update the text label to clearly show if the graph is in Trigger mode
                         std::string labelText = "Axis " + std::to_string(i) + " History";
                         if (isTrigger) {
-                            labelText += " (Trigger Mode: 0.0 to 1.0)";
+                            labelText += " (Trigger Mode: 0.0 to " + std::to_string(scale_max).substr(0, 4) + ")";
                         } else {
-                            labelText += " (Stick Mode: -1.0 to 1.0)";
+                            labelText += " (Stick Mode: " + std::to_string(scale_min).substr(0, 5) + " to " + std::to_string(scale_max).substr(0, 4) + ")";
                         }
                         
                         ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "%s", labelText.c_str());
                         
-                        // Pass the dynamic scale limits to the PlotLines function
                         ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), 
                                          data.data(), (int)data.size(), 0, nullptr, 
                                          scale_min, scale_max, ImVec2(-1, 80));
                                          
-                        ImGui::Spacing(); // Add a little breathing room between graphs
+                        ImGui::Spacing(); 
                     }
+                    ImGui::EndChild();
+                } else {
+                    ImGui::Text("Ready. Please select a controller to begin testing.");
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Event Log")) {
+                if (deviceOpened) {
+                    if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
+                        eventLog.clear();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Press and release a button to record its duration.");
+                    
+                    ImGui::Separator();
+                    ImGui::BeginChild("EventLogRegion", ImVec2(0, 0), true);
+                    
+                    // Iterate backwards to show the newest events at the top
+                    for (auto it = eventLog.rbegin(); it != eventLog.rend(); ++it) {
+                        ImGui::Text("Button %02d pressed for ", it->buttonIndex);
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                    }
+                    
+                    if (eventLog.empty()) {
+                        ImGui::Text("Waiting for inputs...");
+                    }
+                    
                     ImGui::EndChild();
                 } else {
                     ImGui::Text("Ready. Please select a controller to begin testing.");
