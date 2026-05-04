@@ -38,6 +38,29 @@ const char* GetHatDirString(uint8_t value) {
         default:                return "Unknown";
     }
 }
+/**
+ * Converts SDL_HAT bitmasks into standard game engine degrees (0-360).
+ * 0 degrees is strictly UP (North), rotating clockwise.
+ */
+int GetHatDegree(uint8_t value) {
+    switch (value) {
+        case SDL_HAT_UP:        return 0;
+        case SDL_HAT_RIGHTUP:   return 45;
+        case SDL_HAT_RIGHT:     return 90;
+        case SDL_HAT_RIGHTDOWN: return 135;
+        case SDL_HAT_DOWN:      return 180;
+        case SDL_HAT_LEFTDOWN:  return 225;
+        case SDL_HAT_LEFT:      return 270;
+        case SDL_HAT_LEFTUP:    return 315;
+        default:                return -1; // Centered or invalid
+    }
+}
+
+// --- Data structure for the unified macro event log ---
+struct InputEvent {
+    std::string eventName; // e.g., "Button 02" or "Hat 00 (Up-Right, 45°)"
+    double durationMs;
+};
 
 /**
  * Visualizes a 2D Joystick coordinate system
@@ -109,7 +132,15 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
     draw_list->AddCircleFilled(dot_pos, 5.0f, IM_COL32(0, 255, 100, 255));
     
     ImGui::Dummy(sz);
-    ImGui::TextDisabled("%s", GetHatDirString(hatState));
+    // Display direction and exact degrees if the hat is active
+    int degree = GetHatDegree(hatState);
+    if (degree >= 0) {
+        ImGui::TextDisabled("%s (%d°)", GetHatDirString(hatState), degree);
+    } else {
+        // Centered state (no degrees applicable)
+        ImGui::TextDisabled("%s", GetHatDirString(hatState));
+    }
+    
     ImGui::EndGroup();
 }
 
@@ -317,8 +348,11 @@ int main(int argc, char* argv[]) {
     static int maxSamples = 200;      // Controls speed / time window
     static float zoomLevel = 1.0f;    // Controls Y-axis zoom
     
-    std::vector<ButtonEvent> eventLog;
-    std::map<int, std::chrono::steady_clock::time_point> pressTimestamps;
+    std::vector<InputEvent> eventLog;
+    std::map<int, std::chrono::steady_clock::time_point> buttonPressTimestamps;
+    
+    // Maps hat index to a pair of <current_direction, start_time>
+    std::map<int, std::pair<uint8_t, std::chrono::steady_clock::time_point>> hatStateTimestamps;
 
     bool done = false;
     while (!done) {
@@ -337,26 +371,65 @@ int main(int argc, char* argv[]) {
             joyHandler.update();
             const auto& state = joyHandler.getState();
             
-            // 1. Process Event Log for Buttons
+            // Process Event Log for Buttons
             for (int i = 0; i < (int)state.buttons.size(); i++) {
                 bool isDown = state.buttons[i];
-                bool wasDown = (pressTimestamps.find(i) != pressTimestamps.end());
+                bool wasDown = (buttonPressTimestamps.find(i) != buttonPressTimestamps.end());
 
                 if (isDown && !wasDown) {
-                    pressTimestamps[i] = std::chrono::steady_clock::now();
+                    buttonPressTimestamps[i] = std::chrono::steady_clock::now();
                 } else if (!isDown && wasDown) {
-                    auto pressTime = pressTimestamps[i];
+                    auto pressTime = buttonPressTimestamps[i];
                     auto releaseTime = std::chrono::steady_clock::now();
                     std::chrono::duration<double, std::milli> elapsed = releaseTime - pressTime;
 
-                    eventLog.push_back({i, elapsed.count()});
-                    // Keep log size manageable
+                    // Format button name
+                    char buffer[32];
+                    snprintf(buffer, sizeof(buffer), "Button %02d", i);
+
+                    eventLog.push_back({std::string(buffer), elapsed.count()});
                     if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
-                    pressTimestamps.erase(i);
+                    buttonPressTimestamps.erase(i);
                 }
             }
 
-            // 2. Process Axis History
+            // Process Event Log for POV Hats
+            for (int i = 0; i < (int)state.hats.size(); i++) {
+                uint8_t currentHat = state.hats[i];
+                
+                bool wasActive = (hatStateTimestamps.find(i) != hatStateTimestamps.end());
+                uint8_t previousHat = wasActive ? hatStateTimestamps[i].first : SDL_HAT_CENTERED;
+
+                // Detect if the hat changed its direction or was released to center
+                if (currentHat != previousHat) {
+                    
+                    // If it was previously held in a valid direction, log its duration
+                    if (wasActive && previousHat != SDL_HAT_CENTERED) {
+                        auto pressTime = hatStateTimestamps[i].second;
+                        auto releaseTime = std::chrono::steady_clock::now();
+                        std::chrono::duration<double, std::milli> elapsed = releaseTime - pressTime;
+                        
+                        int degree = GetHatDegree(previousHat);
+                        std::string dirName = GetHatDirString(previousHat);
+                        
+                        // Format hat name with direction and exact degrees
+                        char buffer[64];
+                        snprintf(buffer, sizeof(buffer), "Hat %02d (%s, %d°)", i, dirName.c_str(), degree);
+                        
+                        eventLog.push_back({std::string(buffer), elapsed.count()});
+                        if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
+                        
+                        hatStateTimestamps.erase(i);
+                    }
+                    
+                    // If the new state is an active direction, start tracking it immediately
+                    if (currentHat != SDL_HAT_CENTERED) {
+                        hatStateTimestamps[i] = {currentHat, std::chrono::steady_clock::now()};
+                    }
+                }
+            }
+
+            // Process Axis History
             if (axisHistory.size() != state.axes.size()) axisHistory.resize(state.axes.size());
             for (int i = 0; i < (int)state.axes.size(); i++) {
                 axisHistory[i].push_back(state.axes[i]);
@@ -399,9 +472,20 @@ int main(int argc, char* argv[]) {
                     if (ImGui::Selectable(uniqueLabel.c_str(), isSelected)) {
                         selectedDevice = i;
                         deviceOpened = joyHandler.open(selectedDevice);
+                        
                         axisHistory.clear(); 
-                        eventLog.clear(); // Clear macro tracking on device switch
-                        pressTimestamps.clear();
+                        
+                        // --- CRASH FIX ---
+                        // Immediately resize the history buffer to match the new device's axis count.
+                        // This prevents out-of-bounds access if the UI renders before the next Data Update Layer.
+                        if (deviceOpened) {
+                            axisHistory.resize(joyHandler.getState().axes.size());
+                        }
+                        
+                        // Clear all macro tracking states on device switch
+                        eventLog.clear(); 
+                        buttonPressTimestamps.clear();
+                        hatStateTimestamps.clear(); 
                     }
                     
                     if (isSelected) {
@@ -574,14 +658,32 @@ int main(int argc, char* argv[]) {
                     // --- UI Controls for Graph Tweaking ---
                     ImGui::SetNextItemWidth(200);
                     ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1000, "%d samples");
+                    
+                    // Tooltip for the Speed/Samples slider
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Defines the number of historical data points drawn on the graph.\n"
+                                          "Lower values make the graph scroll faster, higher values show a longer history.");
+                    }
+
                     ImGui::SameLine(0, 30.0f);
+                    
                     ImGui::SetNextItemWidth(200);
                     ImGui::SliderFloat("Zoom (Y-Axis)", &zoomLevel, 0.05f, 1.0f, "%.2f");
+                    
+                    // Tooltip for the Zoom slider
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Adjusts the vertical scale of the graph.\n"
+                                          "Zoom in (lower values) to easily inspect minor sensor noise, jitter, or stick drift.");
+                    }
                     
                     ImGui::Separator();
                     ImGui::BeginChild("PlotArea");
 
                     for (int i = 0; i < (int)state.axes.size(); i++) {
+
+                        // Ensure the history buffer actually exists for this axis before accessing it.
+                        // Prevents crashes during frame-desyncs when switching devices rapidly.
+                        if (i >= (int)axisHistory.size()) continue;
                         
                         // Fetch the data directly from the globally updated history buffer
                         std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
@@ -624,7 +726,7 @@ int main(int argc, char* argv[]) {
                     
                     // Iterate backwards to show the newest events at the top
                     for (auto it = eventLog.rbegin(); it != eventLog.rend(); ++it) {
-                        ImGui::Text("Button %02d pressed for ", it->buttonIndex);
+                        ImGui::Text("%s pressed for ", it->eventName.c_str());
                         ImGui::SameLine(0, 0);
                         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
                     }
