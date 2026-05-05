@@ -931,7 +931,15 @@ int main(int argc, char* argv[]) {
                     ImGui::EndChild();
                     
                     ImGui::Separator();
-                    ImGui::Text("Event Stream");
+                    
+                    // --- Clear Log Button for Keyboard Events ---
+                    if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
+                        kbEventLog.clear();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Press and release keys to record their duration.");
+
+                    // --- Event Stream Render Region ---
                     ImGui::BeginChild("KBEventLog", ImVec2(0, 0), true);
 
                     for (auto it = kbEventLog.rbegin(); it != kbEventLog.rend(); ++it) {
