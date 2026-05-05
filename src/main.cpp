@@ -56,10 +56,11 @@ int GetHatDegree(uint8_t value) {
     }
 }
 
-// --- Data structure for the unified macro event log ---
+// --- Data structure for the unified macro event log (Joysticks) ---
 struct InputEvent {
     std::string eventName; // e.g., "Button 02" or "Hat 00 (Up-Right, 45°)"
-    double durationMs;
+    bool isDown;           // Tracks if the event is a press or release
+    double durationMs;     // 0.0 for press events, actual duration for release events
 };
 
 /**
@@ -266,7 +267,7 @@ struct KeyboardEvent {
     std::string keyName;
     SDL_Scancode scancode;
     bool isDown;
-    uint32_t timestamp;
+    double durationMs; // 0.0 for press events, actual duration for release events
 };
 
 // --- Mouse Tracking Data ---
@@ -385,6 +386,10 @@ int main(int argc, char* argv[]) {
     // State variables for Keyboard and Mouse
     std::vector<KeyboardEvent> kbEventLog;
     std::vector<SDL_Scancode> keysCurrentlyHeld;
+    
+    // Tracks the exact time a key was pressed to calculate its duration
+    std::map<SDL_Scancode, std::chrono::steady_clock::time_point> keyPressTimestamps; 
+    
     MouseState mouseState = {};
 
     bool done = false;
@@ -405,9 +410,25 @@ int main(int argc, char* argv[]) {
                     SDL_Scancode scancode = event.key.keysym.scancode;
                     std::string keyName = SDL_GetKeyName(event.key.keysym.sym);
 
-                    // Add to event log
-                    kbEventLog.push_back({keyName, scancode, isDown, event.key.timestamp});
-                    if (kbEventLog.size() > 50) kbEventLog.erase(kbEventLog.begin());
+                    double duration = 0.0;
+                    
+                    if (isDown) {
+                        // Record press time
+                        keyPressTimestamps[scancode] = std::chrono::steady_clock::now();
+                    } else {
+                        // Calculate duration on release
+                        if (keyPressTimestamps.find(scancode) != keyPressTimestamps.end()) {
+                            auto pressTime = keyPressTimestamps[scancode];
+                            auto releaseTime = std::chrono::steady_clock::now();
+                            std::chrono::duration<double, std::milli> elapsed = releaseTime - pressTime;
+                            duration = elapsed.count();
+                            keyPressTimestamps.erase(scancode);
+                        }
+                    }
+
+                    // Add to event log with matching structure
+                    kbEventLog.push_back({keyName, scancode, isDown, duration});
+                    if (kbEventLog.size() > 100) kbEventLog.erase(kbEventLog.begin());
 
                     // Track currently held keys for N-Key Rollover testing
                     if (isDown) {
@@ -464,18 +485,22 @@ int main(int argc, char* argv[]) {
                 bool isDown = state.buttons[i];
                 bool wasDown = (buttonPressTimestamps.find(i) != buttonPressTimestamps.end());
 
+                char buffer[32];
+                snprintf(buffer, sizeof(buffer), "Button %02d", i);
+
                 if (isDown && !wasDown) {
+                    // Button Pressed
                     buttonPressTimestamps[i] = std::chrono::steady_clock::now();
+                    eventLog.push_back({std::string(buffer), true, 0.0});
+                    if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
+                    
                 } else if (!isDown && wasDown) {
+                    // Button Released
                     auto pressTime = buttonPressTimestamps[i];
                     auto releaseTime = std::chrono::steady_clock::now();
                     std::chrono::duration<double, std::milli> elapsed = releaseTime - pressTime;
 
-                    // Format button name
-                    char buffer[32];
-                    snprintf(buffer, sizeof(buffer), "Button %02d", i);
-
-                    eventLog.push_back({std::string(buffer), elapsed.count()});
+                    eventLog.push_back({std::string(buffer), false, elapsed.count()});
                     if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
                     buttonPressTimestamps.erase(i);
                 }
@@ -488,10 +513,9 @@ int main(int argc, char* argv[]) {
                 bool wasActive = (hatStateTimestamps.find(i) != hatStateTimestamps.end());
                 uint8_t previousHat = wasActive ? hatStateTimestamps[i].first : SDL_HAT_CENTERED;
 
-                // Detect if the hat changed its direction or was released to center
                 if (currentHat != previousHat) {
                     
-                    // If it was previously held in a valid direction, log its duration
+                    // Release previous direction
                     if (wasActive && previousHat != SDL_HAT_CENTERED) {
                         auto pressTime = hatStateTimestamps[i].second;
                         auto releaseTime = std::chrono::steady_clock::now();
@@ -500,19 +524,27 @@ int main(int argc, char* argv[]) {
                         int degree = GetHatDegree(previousHat);
                         std::string dirName = GetHatDirString(previousHat);
                         
-                        // Format hat name with direction and exact degrees
                         char buffer[64];
                         snprintf(buffer, sizeof(buffer), "Hat %02d (%s, %d°)", i, dirName.c_str(), degree);
                         
-                        eventLog.push_back({std::string(buffer), elapsed.count()});
+                        eventLog.push_back({std::string(buffer), false, elapsed.count()});
                         if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
                         
                         hatStateTimestamps.erase(i);
                     }
                     
-                    // If the new state is an active direction, start tracking it immediately
+                    // Press new direction
                     if (currentHat != SDL_HAT_CENTERED) {
                         hatStateTimestamps[i] = {currentHat, std::chrono::steady_clock::now()};
+                        
+                        int degree = GetHatDegree(currentHat);
+                        std::string dirName = GetHatDirString(currentHat);
+                        
+                        char buffer[64];
+                        snprintf(buffer, sizeof(buffer), "Hat %02d (%s, %d°)", i, dirName.c_str(), degree);
+                        
+                        eventLog.push_back({std::string(buffer), true, 0.0});
+                        if (eventLog.size() > 100) eventLog.erase(eventLog.begin());
                     }
                 }
             }
@@ -841,9 +873,17 @@ int main(int argc, char* argv[]) {
                         
                         // Iterate backwards to show the newest events at the top
                         for (auto it = eventLog.rbegin(); it != eventLog.rend(); ++it) {
-                            ImGui::Text("%s pressed for ", it->eventName.c_str());
-                            ImGui::SameLine(0, 0);
-                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                            ImVec4 statusColor = it->isDown ? ImVec4(0.0f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
+                            ImGui::TextColored(statusColor, "[%s]", it->isDown ? "DOWN" : " UP ");
+                            ImGui::SameLine();
+                            
+                            if (it->isDown) {
+                                ImGui::Text("%s", it->eventName.c_str());
+                            } else {
+                                ImGui::Text("%s held for ", it->eventName.c_str());
+                                ImGui::SameLine(0, 0);
+                                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                            }
                         }
                         
                         if (eventLog.empty()) {
@@ -893,12 +933,21 @@ int main(int argc, char* argv[]) {
                     ImGui::Separator();
                     ImGui::Text("Event Stream");
                     ImGui::BeginChild("KBEventLog", ImVec2(0, 0), true);
+
                     for (auto it = kbEventLog.rbegin(); it != kbEventLog.rend(); ++it) {
-                        ImVec4 color = it->isDown ? ImVec4(0.0f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
-                        ImGui::TextColored(color, "[%s]", it->isDown ? "DOWN" : " UP ");
+                        ImVec4 statusColor = it->isDown ? ImVec4(0.0f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
+                        ImGui::TextColored(statusColor, "[%s]", it->isDown ? "DOWN" : " UP ");
                         ImGui::SameLine();
-                        ImGui::Text("Key: %s (Scancode: %d)", it->keyName.c_str(), it->scancode);
+                        
+                        if (it->isDown) {
+                            ImGui::Text("Key: %s (Scancode: %d)", it->keyName.c_str(), it->scancode);
+                        } else {
+                            ImGui::Text("Key: %s (Scancode: %d) held for ", it->keyName.c_str(), it->scancode);
+                            ImGui::SameLine(0, 0);
+                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                        }
                     }
+
                     ImGui::EndChild();
                     
                     ImGui::EndTabItem();
