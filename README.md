@@ -1,4 +1,4 @@
-# HID Tester - A Free Joystick, Keyboard & Mouse Testing App
+# HID Tester - A Free Joystick Testing App
 
 A lightweight, high-performance tool designed to test generic USB game controllers, joysticks, button boxes, keyboards, and mice across **Windows, Linux, and macOS**. Built for gamers, sim-racing/flight-sim enthusiasts, and hardware developers to analyze axis precision, button inputs, signal curves, and sensor polling rates in real-time. Have a look at this short [Demo](https://github.com/rhunecke/HIDTester/wiki/Demo).
 
