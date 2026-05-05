@@ -248,10 +248,38 @@ void DrawAnalogAxes(JoystickHandler& joyHandler) {
     }
 }
 
+// Global Application Mode
+// Defines which testing suite is currently visible to the user.
+enum class AppMode {
+    Joystick,
+    KeyboardMouse
+};
+
 // --- Data structure for the macro event log ---
 struct ButtonEvent {
     int buttonIndex;
     double durationMs;
+};
+
+// --- Keyboard Tracking Data ---
+struct KeyboardEvent {
+    std::string keyName;
+    SDL_Scancode scancode;
+    bool isDown;
+    uint32_t timestamp;
+};
+
+// --- Mouse Tracking Data ---
+struct MouseState {
+    int x, y;
+    int deltaX, deltaY;
+    int wheelDelta;
+    bool buttons[5]; // Left, Middle, Right, X1, X2
+    std::deque<ImVec2> movementTrail; // For drawing the 2D Scatter plot
+    
+    // For Polling Rate Calculation
+    uint32_t lastEventTime = 0;
+    float currentHz = 0.0f;
 };
 
 int main(int argc, char* argv[]) {
@@ -354,12 +382,72 @@ int main(int argc, char* argv[]) {
     // Maps hat index to a pair of <current_direction, start_time>
     std::map<int, std::pair<uint8_t, std::chrono::steady_clock::time_point>> hatStateTimestamps;
 
+    // State variables for Keyboard and Mouse
+    std::vector<KeyboardEvent> kbEventLog;
+    std::vector<SDL_Scancode> keysCurrentlyHeld;
+    MouseState mouseState = {};
+
     bool done = false;
+
+    AppMode currentMode = AppMode::Joystick;
+
     while (!done) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL2_ProcessEvent(&event);
             if (event.type == SDL_QUIT) done = true;
+
+            // Keyboard Event Tracking
+            if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                // Ignore key repeats (holding down a key) for clean analysis
+                if (event.key.repeat == 0) {
+                    bool isDown = (event.type == SDL_KEYDOWN);
+                    SDL_Scancode scancode = event.key.keysym.scancode;
+                    std::string keyName = SDL_GetKeyName(event.key.keysym.sym);
+
+                    // Add to event log
+                    kbEventLog.push_back({keyName, scancode, isDown, event.key.timestamp});
+                    if (kbEventLog.size() > 50) kbEventLog.erase(kbEventLog.begin());
+
+                    // Track currently held keys for N-Key Rollover testing
+                    if (isDown) {
+                        keysCurrentlyHeld.push_back(scancode);
+                    } else {
+                        keysCurrentlyHeld.erase(std::remove(keysCurrentlyHeld.begin(), keysCurrentlyHeld.end(), scancode), keysCurrentlyHeld.end());
+                    }
+                }
+            }
+
+            // Mouse Event Tracking
+            if (event.type == SDL_MOUSEMOTION) {
+                mouseState.x = event.motion.x;
+                mouseState.y = event.motion.y;
+                mouseState.deltaX = event.motion.xrel;
+                mouseState.deltaY = event.motion.yrel;
+
+                // Calculate Polling Rate (Hz)
+                uint32_t currentTime = SDL_GetTicks();
+                uint32_t timeDiff = currentTime - mouseState.lastEventTime;
+                if (timeDiff > 0) {
+                    mouseState.currentHz = 1000.0f / (float)timeDiff;
+                }
+                mouseState.lastEventTime = currentTime;
+
+                // Store trail points for the visualizer
+                mouseState.movementTrail.push_back(ImVec2((float)mouseState.x, (float)mouseState.y));
+                if (mouseState.movementTrail.size() > 200) mouseState.movementTrail.pop_front();
+            }
+            if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+                bool isDown = (event.type == SDL_MOUSEBUTTONDOWN);
+                if (event.button.button == SDL_BUTTON_LEFT)   mouseState.buttons[0] = isDown;
+                if (event.button.button == SDL_BUTTON_MIDDLE) mouseState.buttons[1] = isDown;
+                if (event.button.button == SDL_BUTTON_RIGHT)  mouseState.buttons[2] = isDown;
+                if (event.button.button == SDL_BUTTON_X1)     mouseState.buttons[3] = isDown;
+                if (event.button.button == SDL_BUTTON_X2)     mouseState.buttons[4] = isDown;
+            }
+            if (event.type == SDL_MOUSEWHEEL) {
+                mouseState.wheelDelta = event.wheel.y; // Positive is up, negative is down
+            }
         }
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -446,82 +534,108 @@ int main(int argc, char* argv[]) {
         // --- TOOLBAR ---
         ImGui::BeginChild("Toolbar", ImVec2(0, 50), true, ImGuiWindowFlags_MenuBar);
         if (ImGui::BeginMenuBar()) {
-            ImGui::Text("Device:");
-            ImGui::SetNextItemWidth(300);
-            int nJoysticks = SDL_NumJoysticks();
             
-            // --- Dynamic Dropdown Label ---
-            const char* currentName = "Select a device...";
-            if (nJoysticks == 0) {
-                currentName = "No Device Detected";
-            } else if (selectedDevice >= 0 && selectedDevice < nJoysticks) {
-                // Only show a device name if the user has actively selected a valid index
-                currentName = SDL_JoystickNameForIndex(selectedDevice);
+            // --- Compact Mode Switch (Toggle Button) ---
+            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Mode:");
+            ImGui::SameLine(0, 5.0f);
+            
+            // A compact button that toggles the mode when clicked
+            const char* modeLabel = (currentMode == AppMode::Joystick) ? " Joystick " : " KB / Mouse ";
+            if (ImGui::Button(modeLabel)) {
+                currentMode = (currentMode == AppMode::Joystick) ? AppMode::KeyboardMouse : AppMode::Joystick;
             }
-            
-            if (ImGui::BeginCombo("##DeviceSelector", currentName)) {
-                for (int i = 0; i < nJoysticks; i++) {
-                    bool isSelected = (selectedDevice == i);
-                    
-                    // Fix for devices sharing the sam ename, e.g. vJoy
-                    // Append "##" and the index to create a unique ImGui ID
-                    // The user will only see "vJoy Device", but ImGui sees "vJoy Device##0"
-                    std::string deviceName = SDL_JoystickNameForIndex(i);
-                    std::string uniqueLabel = deviceName + "##" + std::to_string(i);
-                    
-                    if (ImGui::Selectable(uniqueLabel.c_str(), isSelected)) {
-                        selectedDevice = i;
-                        deviceOpened = joyHandler.open(selectedDevice);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Click to toggle between Joystick and Keyboard/Mouse testing suites.");
+            }
+
+            ImGui::SameLine(0, 15.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0, 15.0f);
+
+            // --- Context Sensitive Toolbar Controls ---
+            if (currentMode == AppMode::Joystick) {
+                ImGui::Text("Device:");
+                ImGui::SetNextItemWidth(300);
+                int nJoysticks = SDL_NumJoysticks();
+                
+                // --- Dynamic Dropdown Label ---
+                const char* currentName = "Select a device...";
+                if (nJoysticks == 0) {
+                    currentName = "No Device Detected";
+                } else if (selectedDevice >= 0 && selectedDevice < nJoysticks) {
+                    // Only show a device name if the user has actively selected a valid index
+                    currentName = SDL_JoystickNameForIndex(selectedDevice);
+                }
+                
+                if (ImGui::BeginCombo("##DeviceSelector", currentName)) {
+                    for (int i = 0; i < nJoysticks; i++) {
+                        bool isSelected = (selectedDevice == i);
                         
-                        axisHistory.clear(); 
+                        // Fix for devices sharing the sam ename, e.g. vJoy
+                        // Append "##" and the index to create a unique ImGui ID
+                        // The user will only see "vJoy Device", but ImGui sees "vJoy Device##0"
+                        std::string deviceName = SDL_JoystickNameForIndex(i);
+                        std::string uniqueLabel = deviceName + "##" + std::to_string(i);
                         
-                        // --- CRASH FIX ---
-                        // Immediately resize the history buffer to match the new device's axis count.
-                        // This prevents out-of-bounds access if the UI renders before the next Data Update Layer.
-                        if (deviceOpened) {
-                            axisHistory.resize(joyHandler.getState().axes.size());
+                        if (ImGui::Selectable(uniqueLabel.c_str(), isSelected)) {
+                            selectedDevice = i;
+                            deviceOpened = joyHandler.open(selectedDevice);
+                            
+                            axisHistory.clear(); 
+                            
+                            // --- CRASH FIX ---
+                            // Immediately resize the history buffer to match the new device's axis count.
+                            // This prevents out-of-bounds access if the UI renders before the next Data Update Layer.
+                            if (deviceOpened) {
+                                axisHistory.resize(joyHandler.getState().axes.size());
+                            }
+                            
+                            // Clear all macro tracking states on device switch
+                            eventLog.clear(); 
+                            buttonPressTimestamps.clear();
+                            hatStateTimestamps.clear(); 
                         }
                         
-                        // Clear all macro tracking states on device switch
-                        eventLog.clear(); 
-                        buttonPressTimestamps.clear();
-                        hatStateTimestamps.clear(); 
+                        if (isSelected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
                     }
-                    
-                    if (isSelected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
+                    ImGui::EndCombo();
                 }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine(0.0f, 30.0f);
-            ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
+                ImGui::SameLine(0.0f, 30.0f);
+                ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
 
-            // --- Float/Raw Deadzone Slider ---
-            ImGui::SameLine(0.0f, 30.0f);
-            static float deadzoneFloat = 0.0f; // Range: 0.0 to 0.25 (0% to 25%)
-            
-            ImGui::SetNextItemWidth(120);
-            
-            // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
-            // are strictly clamped between our min (0.0f) and max (0.25f) limits.
-            if (ImGui::SliderFloat("Deadzone", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
-                // Convert the float representation back to the 16-bit hardware scale (0 to 32767)
-                int16_t rawLimit = static_cast<int16_t>(deadzoneFloat * 32767.0f);
-                joyHandler.setDeadzone(rawLimit);
+                // --- Float/Raw Deadzone Slider ---
+                ImGui::SameLine(0.0f, 30.0f);
+                static float deadzoneFloat = 0.0f; // Range: 0.0 to 0.25 (0% to 25%)
+                
+                ImGui::SetNextItemWidth(120);
+                
+                // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
+                // are strictly clamped between our min (0.0f) and max (0.25f) limits.
+                if (ImGui::SliderFloat("Deadzone", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
+                    // Convert the float representation back to the 16-bit hardware scale (0 to 32767)
+                    int16_t rawLimit = static_cast<int16_t>(deadzoneFloat * 32767.0f);
+                    joyHandler.setDeadzone(rawLimit);
+                }
+
+                // Combined Tooltip with clear UI instructions for manual input
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Filters out small axis movements near the center to prevent jitter.\n"
+                                      "Shown as normalized float (e.g., 0.100 = 10%%) and raw 16-bit integer.\n"
+                                      "[Tip: CTRL+Click on the slider to type an exact value]");
+                }
+                
+                // Display the exact raw hardware value next to it for diagnostics
+                ImGui::SameLine();
+                ImGui::TextDisabled("(Raw: %d)", static_cast<int>(deadzoneFloat * 32767.0f));
+                
+            } else if (currentMode == AppMode::KeyboardMouse) {
+                // Render Keyboard/Mouse specific controls
+                ImGui::TextDisabled("Listening to global input events...");
             }
 
-            // Combined Tooltip with clear UI instructions for manual input
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Filters out small axis movements near the center to prevent jitter.\n"
-                                  "Shown as normalized float (e.g., 0.100 = 10%%) and raw 16-bit integer.\n"
-                                  "[Tip: CTRL+Click on the slider to type an exact value]");
-            }
-            
-            // Display the exact raw hardware value next to it for diagnostics
-            ImGui::SameLine();
-            ImGui::TextDisabled("(Raw: %d)", static_cast<int>(deadzoneFloat * 32767.0f));
-            
+            // The "About" button stays globally available at the far right
             ImGui::SameLine(ImGui::GetWindowWidth() - 110);
             if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
 
@@ -581,166 +695,346 @@ int main(int argc, char* argv[]) {
 
         // --- CONTENT ---
         if (ImGui::BeginTabBar("MainTabs")) {
-            if (ImGui::BeginTabItem("Live Test")) {
-                if (deviceOpened) {
-                    const auto& state = joyHandler.getState();
 
-                    if (showVisualizer && state.axes.size() >= 2) {
-                        ImGui::BeginChild("VisualizerArea", ImVec2(240, 0), true);
-                        ImGui::Text("Joystick Mapping");
-                        ImGui::Separator();
-                        
-                        auto drawCombo = [&](const char* id, int* idx) {
-                            ImGui::SetNextItemWidth(90);
-                            if (ImGui::BeginCombo(id, ("Axis " + std::to_string(*idx)).c_str())) {
-                                for (int i = 0; i < (int)state.axes.size(); i++) {
-                                    if (ImGui::Selectable(("Axis " + std::to_string(i)).c_str(), *idx == i)) *idx = i;
+            // JOYSTICK TABS
+            if (currentMode == AppMode::Joystick) {
+                if (ImGui::BeginTabItem("Live Test")) {
+                    if (deviceOpened) {
+                        const auto& state = joyHandler.getState();
+
+                        if (showVisualizer && state.axes.size() >= 2) {
+                            ImGui::BeginChild("VisualizerArea", ImVec2(240, 0), true);
+                            ImGui::Text("Joystick Mapping");
+                            ImGui::Separator();
+                            
+                            auto drawCombo = [&](const char* id, int* idx) {
+                                ImGui::SetNextItemWidth(90);
+                                if (ImGui::BeginCombo(id, ("Axis " + std::to_string(*idx)).c_str())) {
+                                    for (int i = 0; i < (int)state.axes.size(); i++) {
+                                        if (ImGui::Selectable(("Axis " + std::to_string(i)).c_str(), *idx == i)) *idx = i;
+                                    }
+                                    ImGui::EndCombo();
                                 }
-                                ImGui::EndCombo();
-                            }
-                        };
+                            };
 
-                        drawCombo("##X1", &axisX_idx); ImGui::SameLine(); drawCombo("##Y1", &axisY_idx);
-                        DrawJoystickMonitor("Primary Stick", state.axes[axisX_idx % state.axes.size()], state.axes[axisY_idx % state.axes.size()]);
+                            drawCombo("##X1", &axisX_idx); ImGui::SameLine(); drawCombo("##Y1", &axisY_idx);
+                            DrawJoystickMonitor("Primary Stick", state.axes[axisX_idx % state.axes.size()], state.axes[axisY_idx % state.axes.size()]);
+                            
+                            if (state.axes.size() >= 4) {
+                                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                                drawCombo("##X2", &axisX2_idx); ImGui::SameLine(); drawCombo("##Y2", &axisY2_idx);
+                                DrawJoystickMonitor("Secondary Stick", state.axes[axisX2_idx % state.axes.size()], state.axes[axisY2_idx % state.axes.size()]);
+                            }
+                            ImGui::EndChild();
+                            ImGui::SameLine();
+                        }
+
+                        ImGui::BeginChild("DataDisplay");
                         
-                        if (state.axes.size() >= 4) {
-                            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                            drawCombo("##X2", &axisX2_idx); ImGui::SameLine(); drawCombo("##Y2", &axisY2_idx);
-                            DrawJoystickMonitor("Secondary Stick", state.axes[axisX2_idx % state.axes.size()], state.axes[axisY2_idx % state.axes.size()]);
+                        // Call professional axis visualization passing the handler reference
+                        DrawAnalogAxes(joyHandler);
+                        
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Buttons");
+                        float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                        for (int i = 0; i < (int)state.buttons.size(); i++) {
+                            if (state.buttons[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0.8f, 0.2f, 1));
+                            ImGui::Button(std::to_string(i).c_str(), ImVec2(34, 34));
+                            if (state.buttons[i]) ImGui::PopStyleColor();
+
+                            float last_button_x2 = ImGui::GetItemRectMax().x;
+                            float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 34.0f;
+                            if (i + 1 < (int)state.buttons.size() && next_button_x2 < window_visible_x2) ImGui::SameLine();
+                        }
+                        
+                        if (!state.hats.empty()) {
+                            ImGui::Spacing(); ImGui::Separator();
+                            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "POV Hats");
+                            for (int i = 0; i < (int)state.hats.size(); i++) {
+                                if (i > 0) ImGui::SameLine();
+                                DrawHatVisualizer(("Hat " + std::to_string(i)).c_str(), state.hats[i], 80.0f);
+                            }
                         }
                         ImGui::EndChild();
+                    } else {
+                        ImGui::Text("Ready. Please select a controller to begin testing.");
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Axis Curves")) {
+                    if (deviceOpened) {
+                        
+                        // REMOVED: joyHandler.update();
+                        // REMOVED: axisHistory push_back / pop_front logic. 
+                        // Data tracking is now running continuously in the background.
+
+                        const auto& state = joyHandler.getState();
+                        
+                        // --- UI Controls for Graph Tweaking ---
+                        ImGui::SetNextItemWidth(200);
+                        ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1500, "%d samples");
+                        
+                        // Tooltip for the Speed/Samples slider
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Defines the number of historical data points drawn on the graph.\n"
+                                            "Lower values make the graph scroll faster, higher values show a longer history.");
+                        }
+
+                        ImGui::SameLine(0, 30.0f);
+                        
+                        ImGui::SetNextItemWidth(200);
+                        ImGui::SliderFloat("Zoom (Y-Axis)", &zoomLevel, 0.05f, 1.0f, "%.2f");
+                        
+                        // Tooltip for the Zoom slider
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Adjusts the vertical scale of the graph.\n"
+                                            "Zoom in (lower values) to easily inspect minor sensor noise, jitter, or stick drift.");
+                        }
+                        
+                        ImGui::Separator();
+                        ImGui::BeginChild("PlotArea");
+
+                        for (int i = 0; i < (int)state.axes.size(); i++) {
+
+                            // Ensure the history buffer actually exists for this axis before accessing it.
+                            // Prevents crashes during frame-desyncs when switching devices rapidly.
+                            if (i >= (int)axisHistory.size()) continue;
+                            
+                            // Fetch the data directly from the globally updated history buffer
+                            std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
+                            
+                            bool isTrigger = joyHandler.isAxisTrigger(i);
+                            float scale_min = isTrigger ? 0.0f : -zoomLevel; 
+                            float scale_max = zoomLevel;                     
+                            
+                            std::string labelText = "Axis " + std::to_string(i) + " History";
+                            if (isTrigger) {
+                                labelText += " (Trigger Mode: 0.0 to " + std::to_string(scale_max).substr(0, 4) + ")";
+                            } else {
+                                labelText += " (Stick Mode: " + std::to_string(scale_min).substr(0, 5) + " to " + std::to_string(scale_max).substr(0, 4) + ")";
+                            }
+                            
+                            ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "%s", labelText.c_str());
+                            
+                            ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), 
+                                            data.data(), (int)data.size(), 0, nullptr, 
+                                            scale_min, scale_max, ImVec2(-1, 80));
+                                            
+                            ImGui::Spacing(); 
+                        }
+                        ImGui::EndChild();
+                    } else {
+                        ImGui::Text("Ready. Please select a controller to begin testing.");
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Event Log")) {
+                    if (deviceOpened) {
+                        if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
+                            eventLog.clear();
+                        }
                         ImGui::SameLine();
+                        ImGui::TextDisabled("Press and release a button to record its duration.");
+                        
+                        ImGui::Separator();
+                        ImGui::BeginChild("EventLogRegion", ImVec2(0, 0), true);
+                        
+                        // Iterate backwards to show the newest events at the top
+                        for (auto it = eventLog.rbegin(); it != eventLog.rend(); ++it) {
+                            ImGui::Text("%s pressed for ", it->eventName.c_str());
+                            ImGui::SameLine(0, 0);
+                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                        }
+                        
+                        if (eventLog.empty()) {
+                            ImGui::Text("Waiting for inputs...");
+                        }
+                        
+                        ImGui::EndChild();
+                    } else {
+                        ImGui::Text("Ready. Please select a controller to begin testing.");
                     }
+                    ImGui::EndTabItem();
+                }                
 
-                    ImGui::BeginChild("DataDisplay");
+            }
+
+            // KEYBOARD / MOUSE TABS
+            if (currentMode == AppMode::KeyboardMouse) {
+                if (ImGui::BeginTabItem("Keyboard Diagnostics")) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "N-Key Rollover Check");
+                    ImGui::Text("Keys Currently Held: %d", (int)keysCurrentlyHeld.size());
+
+                    ImGui::Spacing();
+
+                    ImGui::BeginChild("HeldKeysRegion", ImVec2(0, 60), true); // 60 pixels fixed height
                     
-                    // Call professional axis visualization passing the handler reference
-                    DrawAnalogAxes(joyHandler);
-                    
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Buttons");
+                    // Calculate wrapping so buttons flow nicely to the next line if many are held
                     float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-                    for (int i = 0; i < (int)state.buttons.size(); i++) {
-                        if (state.buttons[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0.8f, 0.2f, 1));
-                        ImGui::Button(std::to_string(i).c_str(), ImVec2(34, 34));
-                        if (state.buttons[i]) ImGui::PopStyleColor();
-
-                        float last_button_x2 = ImGui::GetItemRectMax().x;
-                        float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 34.0f;
-                        if (i + 1 < (int)state.buttons.size() && next_button_x2 < window_visible_x2) ImGui::SameLine();
-                    }
                     
-                    if (!state.hats.empty()) {
-                        ImGui::Spacing(); ImGui::Separator();
-                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "POV Hats");
-                        for (int i = 0; i < (int)state.hats.size(); i++) {
-                            if (i > 0) ImGui::SameLine();
-                            DrawHatVisualizer(("Hat " + std::to_string(i)).c_str(), state.hats[i], 80.0f);
+                    for (size_t i = 0; i < keysCurrentlyHeld.size(); i++) {
+                        auto scancode = keysCurrentlyHeld[i];
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.8f, 0.2f, 1.0f)); 
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+                        ImGui::Button(SDL_GetScancodeName(scancode));
+                        ImGui::PopStyleColor(2);
+                        
+                        // Wrap to next line if the next button would go off-screen
+                        float last_button_x2 = ImGui::GetItemRectMax().x;
+                        float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 80.0f; // Estimate 80px per button
+                        if (i + 1 < keysCurrentlyHeld.size() && next_button_x2 < window_visible_x2) {
+                            ImGui::SameLine();
                         }
                     }
                     ImGui::EndChild();
-                } else {
-                    ImGui::Text("Ready. Please select a controller to begin testing.");
-                }
-                ImGui::EndTabItem();
-            }
-
-
-            if (ImGui::BeginTabItem("Axis Curves")) {
-                if (deviceOpened) {
-                    
-                    // REMOVED: joyHandler.update();
-                    // REMOVED: axisHistory push_back / pop_front logic. 
-                    // Data tracking is now running continuously in the background.
-
-                    const auto& state = joyHandler.getState();
-                    
-                    // --- UI Controls for Graph Tweaking ---
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1500, "%d samples");
-                    
-                    // Tooltip for the Speed/Samples slider
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Defines the number of historical data points drawn on the graph.\n"
-                                          "Lower values make the graph scroll faster, higher values show a longer history.");
-                    }
-
-                    ImGui::SameLine(0, 30.0f);
-                    
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::SliderFloat("Zoom (Y-Axis)", &zoomLevel, 0.05f, 1.0f, "%.2f");
-                    
-                    // Tooltip for the Zoom slider
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Adjusts the vertical scale of the graph.\n"
-                                          "Zoom in (lower values) to easily inspect minor sensor noise, jitter, or stick drift.");
-                    }
                     
                     ImGui::Separator();
-                    ImGui::BeginChild("PlotArea");
-
-                    for (int i = 0; i < (int)state.axes.size(); i++) {
-
-                        // Ensure the history buffer actually exists for this axis before accessing it.
-                        // Prevents crashes during frame-desyncs when switching devices rapidly.
-                        if (i >= (int)axisHistory.size()) continue;
-                        
-                        // Fetch the data directly from the globally updated history buffer
-                        std::vector<float> data(axisHistory[i].begin(), axisHistory[i].end());
-                        
-                        bool isTrigger = joyHandler.isAxisTrigger(i);
-                        float scale_min = isTrigger ? 0.0f : -zoomLevel; 
-                        float scale_max = zoomLevel;                     
-                        
-                        std::string labelText = "Axis " + std::to_string(i) + " History";
-                        if (isTrigger) {
-                            labelText += " (Trigger Mode: 0.0 to " + std::to_string(scale_max).substr(0, 4) + ")";
-                        } else {
-                            labelText += " (Stick Mode: " + std::to_string(scale_min).substr(0, 5) + " to " + std::to_string(scale_max).substr(0, 4) + ")";
-                        }
-                        
-                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "%s", labelText.c_str());
-                        
-                        ImGui::PlotLines(("##Plot" + std::to_string(i)).c_str(), 
-                                         data.data(), (int)data.size(), 0, nullptr, 
-                                         scale_min, scale_max, ImVec2(-1, 80));
-                                         
-                        ImGui::Spacing(); 
+                    ImGui::Text("Event Stream");
+                    ImGui::BeginChild("KBEventLog", ImVec2(0, 0), true);
+                    for (auto it = kbEventLog.rbegin(); it != kbEventLog.rend(); ++it) {
+                        ImVec4 color = it->isDown ? ImVec4(0.0f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
+                        ImGui::TextColored(color, "[%s]", it->isDown ? "DOWN" : " UP ");
+                        ImGui::SameLine();
+                        ImGui::Text("Key: %s (Scancode: %d)", it->keyName.c_str(), it->scancode);
                     }
                     ImGui::EndChild();
-                } else {
-                    ImGui::Text("Ready. Please select a controller to begin testing.");
+                    
+                    ImGui::EndTabItem();
                 }
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Event Log")) {
-                if (deviceOpened) {
-                    if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
-                        eventLog.clear();
+                
+                if (ImGui::BeginTabItem("Mouse Diagnostics")) {
+                    
+                    // --- Persistent state for diagnostics ---
+                    static float maxHz = 0.0f;
+                    static int accumulatedScroll = 0;
+                    
+                    // Update peak Hz
+                    if (mouseState.currentHz > maxHz) {
+                        maxHz = mouseState.currentHz;
+                    }
+                    
+                    // Update accumulated scroll (to visualize continuous wheel usage)
+                    if (mouseState.wheelDelta != 0) {
+                        accumulatedScroll += mouseState.wheelDelta;
+                        // Reset delta after reading to act as a trigger
+                        mouseState.wheelDelta = 0; 
+                    }
+
+                    // TOP ROW: Polling Rate & Core Stats
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Sensor Performance");
+                    
+                    if (ImGui::Button("Reset Peak Stats")) {
+                        maxHz = 0.0f;
+                        accumulatedScroll = 0;
                     }
                     ImGui::SameLine();
-                    ImGui::TextDisabled("Press and release a button to record its duration.");
+                    
+                    // Display current and max polling rate
+                    ImGui::Text("Polling Rate: ");
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.0f Hz", mouseState.currentHz);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(Peak: %.0f Hz)", maxHz);
                     
                     ImGui::Separator();
-                    ImGui::BeginChild("EventLogRegion", ImVec2(0, 0), true);
+                    ImGui::Spacing();
+
+                    // MIDDLE ROW: Buttons & Deltas
+                    ImGui::BeginChild("MouseButtonsRegion", ImVec2(0, 80), false);
                     
-                    // Iterate backwards to show the newest events at the top
-                    for (auto it = eventLog.rbegin(); it != eventLog.rend(); ++it) {
-                        ImGui::Text("%s pressed for ", it->eventName.c_str());
-                        ImGui::SameLine(0, 0);
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.1f ms", it->durationMs);
+                    ImGui::Columns(3, "MouseDataColumns", false);
+                    
+                    // Column 1: Core Buttons
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Main Buttons");
+                    const char* btnLabels[] = { "Left", "Middle", "Right", "X1 (Back)", "X2 (Forward)" };
+                    for (int i = 0; i < 3; i++) {
+                        if (mouseState.buttons[i]) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.8f, 0.2f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                        }
+                        ImGui::Button(btnLabels[i], ImVec2(60, 25));
+                        if (mouseState.buttons[i]) ImGui::PopStyleColor(2);
+                        ImGui::SameLine();
                     }
+                    ImGui::NewLine();
                     
-                    if (eventLog.empty()) {
-                        ImGui::Text("Waiting for inputs...");
+                    ImGui::NextColumn();
+                    
+                    // Column 2: Extra Buttons & Scroll Wheel
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Auxiliary");
+                    for (int i = 3; i < 5; i++) {
+                        if (mouseState.buttons[i]) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.8f, 0.2f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                        }
+                        ImGui::Button(btnLabels[i], ImVec2(95, 25));
+                        if (mouseState.buttons[i]) ImGui::PopStyleColor(2);
+                        ImGui::SameLine();
                     }
+                    ImGui::NewLine();
+                    ImGui::Text("Scroll Wheel Accumulator: %d", accumulatedScroll);
                     
+                    ImGui::NextColumn();
+                    
+                    // Column 3: Raw Movement Deltas
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Raw Movement Data");
+                    ImGui::Text("Absolute: X: %d, Y: %d", mouseState.x, mouseState.y);
+                    ImGui::Text("Delta:    X: %d, Y: %d", mouseState.deltaX, mouseState.deltaY);
+                    
+                    ImGui::Columns(1);
                     ImGui::EndChild();
-                } else {
-                    ImGui::Text("Ready. Please select a controller to begin testing.");
+
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // BOTTOM ROW: 2D Sensor Tracking Canvas
+                    ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Sensor Trail (Jitter & Angle Snapping Test)");
+                    ImGui::TextDisabled("Move the mouse across the application window to draw the trail.");
+                    
+                    // Create a drawing area that fills the remaining space
+                    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+                    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+                    if (canvasSize.y < 200.0f) canvasSize.y = 200.0f; // Ensure minimum height
+                    
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    
+                    // Draw Canvas Background and Border
+                    drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
+                    drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(100, 100, 100, 255));
+                    
+                    // Draw the movement trail
+                    // SDL absolute mouse coordinates are relative to the client window.
+                    // We map them to the screen-space of ImGui for drawing.
+                    if (mouseState.movementTrail.size() >= 2) {
+                        for (size_t i = 1; i < mouseState.movementTrail.size(); i++) {
+                            
+                            // Map local window coordinates to global screen coordinates
+                            ImVec2 p1 = ImVec2(mouseState.movementTrail[i-1].x + canvasPos.x, mouseState.movementTrail[i-1].y + canvasPos.y);
+                            ImVec2 p2 = ImVec2(mouseState.movementTrail[i].x + canvasPos.x, mouseState.movementTrail[i].y + canvasPos.y);
+                            
+                            // Clamp drawing points so they don't bleed out of the canvas box
+                            bool p1InBounds = (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x && p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y);
+                            bool p2InBounds = (p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x && p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y);
+                            
+                            if (p1InBounds && p2InBounds) {
+                                // Draw a line segment
+                                drawList->AddLine(p1, p2, IM_COL32(0, 255, 128, 200), 2.0f);
+                                
+                                // Draw a dot at the polling point to visualize report frequency
+                                drawList->AddCircleFilled(p2, 2.0f, IM_COL32(255, 255, 255, 255));
+                            }
+                        }
+                    }
+                    
+                    // Invisible button overlay over the canvas to capture mouse input context if needed
+                    ImGui::InvisibleButton("CanvasOverlay", canvasSize);
+                    
+                    ImGui::EndTabItem();
                 }
-                ImGui::EndTabItem();
             }
+
             ImGui::EndTabBar();
         }
 

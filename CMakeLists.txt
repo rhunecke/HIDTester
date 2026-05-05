@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Central version management
-project(HIDTester VERSION 1.2.0 LANGUAGES CXX)
+project(HIDTester VERSION 1.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
