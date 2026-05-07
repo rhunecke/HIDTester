@@ -56,25 +56,33 @@ public:
             // Initialize all axes as default bidirectional sticks
             state.axisIsTrigger.assign(numAxes, false);
 
+            // Mark all axes as pending for the event-driven auto-detection
+            axisAutoDetectPending.assign(numAxes, true);
+
             // --- Auto-Detection Heuristic for Triggers ---
             // Force an immediate update to grab the real physical state 
             // the moment the device is initialized.
             SDL_JoystickUpdate(); 
             
             for (int i = 0; i < numAxes; i++) {
-                int16_t initialVal = SDL_JoystickGetAxis(joystick, i);
+                int16_t initialVal = 0;
                 
+                // Try to get the initial state if the driver provides it immediately
+                if (SDL_JoystickGetAxisInitialState(joystick, i, &initialVal)) {
+                    if (initialVal != 0) {
 #ifndef __APPLE__
-                // Windows & Linux: Triggers rest at absolute minimum (-32768).
-                // Sticks rest at center (0). We can safely auto-detect.
-                if (initialVal <= -32000) {
-                    state.axisIsTrigger[i] = true;
-                }
+                        // Windows & Linux: Triggers rest at absolute minimum (-32768).
+                        if (initialVal <= -32000) {
+                            state.axisIsTrigger[i] = true;
+                        }
 #else
                 // macOS: Both Triggers and Sticks rest at 0.
                 // It is impossible to safely distinguish them just by looking at the initial value.
                 // We leave it false. The macOS user must manually check the "Trg" box in the UI.
 #endif
+                        axisAutoDetectPending[i] = false; // Detection finished for this axis
+                    }
+                }
             }
             
             return true;
@@ -96,6 +104,18 @@ public:
         for (int i = 0; i < (int)state.axes.size(); i++) {
             // Read the raw API value
             int16_t rawSdlValue = SDL_JoystickGetAxis(joystick, i);
+
+            // --- EVENT-DRIVEN AUTO-DETECT ---
+            // If the OS/Driver delayed the initial report, we wait until the axis shows movement.
+            // A resting trigger will immediately jump to -32768 on its first true USB packet.
+            if (axisAutoDetectPending[i] && rawSdlValue != 0) {
+#ifndef __APPLE__
+                if (rawSdlValue <= -32000) {
+                    state.axisIsTrigger[i] = true;
+                }
+#endif
+                axisAutoDetectPending[i] = false; // Decision made, lock it in.
+            }
             
             // Store the unaltered raw value for the diagnostic UI (Progress bars)
             state.sdlAxes[i] = rawSdlValue;           
@@ -175,4 +195,5 @@ private:
     SDL_Joystick* joystick;
     JoystickState state;
     int16_t deadzoneLimit; 
+    std::vector<bool> axisAutoDetectPending; // Tracks which axes still need initial classification
 };
