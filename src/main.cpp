@@ -100,12 +100,21 @@ void DrawJoystickMonitor(const char* label, float axisX, float axisY, float size
     ImGui::EndGroup();
 }
 
-/**
- * Visualizes an 8-way POV Hat (D-Pad) with a radar-style crosshair
- */
+// Visualizes an 8-way POV Hat (D-Pad) with a radar-style crosshair
 void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) {
     ImGui::BeginGroup();
+    
+    // Force a strict minimum width for this entire block.
+    // This stops the UI from shifting horizontally when the text length changes.
+    float blockWidth = 160.0f;
+    
+    // Center the label text
+    float labelWidth = ImGui::CalcTextSize(label).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (blockWidth - labelWidth) * 0.5f);
     ImGui::Text("%s", label);
+    
+    // Center the radar drawing area
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (blockWidth - size) * 0.5f);
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImVec2 sz = ImVec2(size, size);
     ImVec2 center = ImVec2(p0.x + sz.x * 0.5f, p0.y + sz.y * 0.5f);
@@ -132,15 +141,24 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
     draw_list->AddCircleFilled(dot_pos, 6.0f, IM_COL32(0, 0, 0, 150));
     draw_list->AddCircleFilled(dot_pos, 5.0f, IM_COL32(0, 255, 100, 255));
     
-    ImGui::Dummy(sz);
-    // Display direction and exact degrees if the hat is active
+    ImGui::Dummy(sz); // Reserves vertical space for the radar drawing
+    
+    // Format the status string
+    std::string statusText;
     int degree = GetHatDegree(hatState);
     if (degree >= 0) {
-        ImGui::TextDisabled("%s (%d°)", GetHatDirString(hatState), degree);
+        statusText = std::string(GetHatDirString(hatState)) + " (" + std::to_string(degree) + "°)";
     } else {
-        // Centered state (no degrees applicable)
-        ImGui::TextDisabled("%s", GetHatDirString(hatState));
+        statusText = GetHatDirString(hatState);
     }
+    
+    // Center the status text
+    float textWidth = ImGui::CalcTextSize(statusText.c_str()).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (blockWidth - textWidth) * 0.5f);
+    ImGui::TextDisabled("%s", statusText.c_str());
+    
+    // Invisible dummy to definitively lock the group's minimum bounding box width
+    ImGui::Dummy(ImVec2(blockWidth, 0.0f));
     
     ImGui::EndGroup();
 }
@@ -373,6 +391,9 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::deque<float>> axisHistory;
 
+    // Debug Stress Test
+    static bool debug_StressTestUI = false; // Toggles the UI rendering stress test
+
     // --- State variables for Axis Curves and Macro Log ---
     static int maxSamples = 500;      // Controls speed / time window
     static float zoomLevel = 1.0f;    // Controls Y-axis zoom
@@ -589,27 +610,23 @@ int main(int argc, char* argv[]) {
                 ImGui::Text("Device:");
                 ImGui::SetNextItemWidth(300);
                 int nJoysticks = SDL_NumJoysticks();
-                
+
                 // --- Dynamic Dropdown Label ---
-                const char* currentName = "Select a device...";
+                std::string currentNameStr = "Select a device...";
                 if (nJoysticks == 0) {
-                    currentName = "No Device Detected";
+                    currentNameStr = "No Device Detected";
                 } else if (selectedDevice >= 0 && selectedDevice < nJoysticks) {
-                    // Only show a device name if the user has actively selected a valid index
-                    currentName = SDL_JoystickNameForIndex(selectedDevice);
+                    // Put ID in front of names
+                    currentNameStr = "[" + std::to_string(selectedDevice) + "] " + SDL_JoystickNameForIndex(selectedDevice);
                 }
                 
-                if (ImGui::BeginCombo("##DeviceSelector", currentName)) {
+                if (ImGui::BeginCombo("##DeviceSelector", currentNameStr.c_str())) {
                     for (int i = 0; i < nJoysticks; i++) {
                         bool isSelected = (selectedDevice == i);
-                        
-                        // Fix for devices sharing the sam ename, e.g. vJoy
-                        // Append "##" and the index to create a unique ImGui ID
-                        // The user will only see "vJoy Device", but ImGui sees "vJoy Device##0"
                         std::string deviceName = SDL_JoystickNameForIndex(i);
-                        std::string uniqueLabel = deviceName + "##" + std::to_string(i);
+                        std::string visibleLabel = "[" + std::to_string(i) + "] " + deviceName;
                         
-                        if (ImGui::Selectable(uniqueLabel.c_str(), isSelected)) {
+                        if (ImGui::Selectable(visibleLabel.c_str(), isSelected)) {
                             selectedDevice = i;
                             deviceOpened = joyHandler.open(selectedDevice);
                             
@@ -617,7 +634,6 @@ int main(int argc, char* argv[]) {
                             
                             // --- CRASH FIX ---
                             // Immediately resize the history buffer to match the new device's axis count.
-                            // This prevents out-of-bounds access if the UI renders before the next Data Update Layer.
                             if (deviceOpened) {
                                 axisHistory.resize(joyHandler.getState().axes.size());
                             }
@@ -667,8 +683,19 @@ int main(int argc, char* argv[]) {
                 ImGui::TextDisabled("Listening to global input events...");
             }
 
-            // The "About" button stays globally available at the far right
-            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
+            // Debug Menu & About Button
+            ImGui::SameLine(ImGui::GetWindowWidth() - 110); // Default position of "About"
+
+            // Renders Debug menu when using Debug build
+            #ifndef NDEBUG
+                ImGui::SameLine(ImGui::GetWindowWidth() - 200); 
+                if (ImGui::BeginMenu(" 🛠 Debug ")) {
+                    ImGui::MenuItem("Enable UI Stress Test", NULL, &debug_StressTestUI);
+                    ImGui::EndMenu();
+                }
+                ImGui::SameLine();
+            #endif
+
             if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
 
             ImGui::EndMenuBar();
@@ -732,9 +759,41 @@ int main(int argc, char* argv[]) {
             if (currentMode == AppMode::Joystick) {
                 if (ImGui::BeginTabItem("Live Test")) {
                     if (deviceOpened) {
-                        const auto& state = joyHandler.getState();
+                        JoystickState displayState = joyHandler.getState();
 
-                        if (showVisualizer && state.axes.size() >= 2) {
+                        if (debug_StressTestUI) {
+                            // Maximize Axes (8 is the standard DirectInput Limit)
+                            displayState.sdlAxes.assign(8, 16384);
+                            displayState.axisIsTrigger.assign(8, false);
+                            
+                            // Maximize Buttons (128 is the technical limit for many APIs)
+                            displayState.buttons.assign(128, false);
+                            displayState.buttons[15] = true;  // Fake a few pressed buttons
+                            displayState.buttons[127] = true; // Test the absolute last button
+
+                            // --- ANIMATED HATS (Time-based cycling) ---
+                            // Array of all 9 possible hat states
+                            const uint8_t hat_cycle[] = {
+                                SDL_HAT_CENTERED, SDL_HAT_UP, SDL_HAT_RIGHTUP, SDL_HAT_RIGHT, 
+                                SDL_HAT_RIGHTDOWN, SDL_HAT_DOWN, SDL_HAT_LEFTDOWN, SDL_HAT_LEFT, SDL_HAT_LEFTUP
+                            };
+
+                            // Use the time (in seconds) to smoothly cycle through the array
+                            double t = ImGui::GetTime();
+
+                            // Maximize Hats (4 is the standard limit)
+                            displayState.hats.assign(4, SDL_HAT_CENTERED);
+
+                            // Give each hat a slightly different speed and starting offset
+                            displayState.hats[0] = hat_cycle[(int)(t * 2.0) % 9];       // Changes every 0.5 seconds
+                            displayState.hats[1] = hat_cycle[(int)(t * 1.5 + 3) % 9];   // Slightly slower, different angle
+                            displayState.hats[2] = hat_cycle[(int)(t * 4.0 + 6) % 9];   // Very fast!
+                            displayState.hats[3] = hat_cycle[(int)(t * 0.8 + 8) % 9];   // Very slow, almost static
+                        }
+
+
+
+                        if (showVisualizer && displayState.axes.size() >= 2) {
                             ImGui::BeginChild("VisualizerArea", ImVec2(240, 0), true);
                             ImGui::Text("Joystick Mapping");
                             ImGui::Separator();
@@ -742,7 +801,7 @@ int main(int argc, char* argv[]) {
                             auto drawCombo = [&](const char* id, int* idx) {
                                 ImGui::SetNextItemWidth(90);
                                 if (ImGui::BeginCombo(id, ("Axis " + std::to_string(*idx)).c_str())) {
-                                    for (int i = 0; i < (int)state.axes.size(); i++) {
+                                    for (int i = 0; i < (int)displayState.axes.size(); i++) {
                                         if (ImGui::Selectable(("Axis " + std::to_string(i)).c_str(), *idx == i)) *idx = i;
                                     }
                                     ImGui::EndCombo();
@@ -750,12 +809,12 @@ int main(int argc, char* argv[]) {
                             };
 
                             drawCombo("##X1", &axisX_idx); ImGui::SameLine(); drawCombo("##Y1", &axisY_idx);
-                            DrawJoystickMonitor("Primary Stick", state.axes[axisX_idx % state.axes.size()], state.axes[axisY_idx % state.axes.size()]);
+                            DrawJoystickMonitor("Primary Stick", displayState.axes[axisX_idx % displayState.axes.size()], displayState.axes[axisY_idx % displayState.axes.size()]);
                             
-                            if (state.axes.size() >= 4) {
+                            if (displayState.axes.size() >= 4) {
                                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                                 drawCombo("##X2", &axisX2_idx); ImGui::SameLine(); drawCombo("##Y2", &axisY2_idx);
-                                DrawJoystickMonitor("Secondary Stick", state.axes[axisX2_idx % state.axes.size()], state.axes[axisY2_idx % state.axes.size()]);
+                                DrawJoystickMonitor("Secondary Stick", displayState.axes[axisX2_idx % displayState.axes.size()], displayState.axes[axisY2_idx % displayState.axes.size()]);
                             }
                             ImGui::EndChild();
                             ImGui::SameLine();
@@ -769,22 +828,22 @@ int main(int argc, char* argv[]) {
                         ImGui::Separator();
                         ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Buttons");
                         float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-                        for (int i = 0; i < (int)state.buttons.size(); i++) {
-                            if (state.buttons[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0.8f, 0.2f, 1));
+                        for (int i = 0; i < (int)displayState.buttons.size(); i++) {
+                            if (displayState.buttons[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0.8f, 0.2f, 1));
                             ImGui::Button(std::to_string(i).c_str(), ImVec2(34, 34));
-                            if (state.buttons[i]) ImGui::PopStyleColor();
+                            if (displayState.buttons[i]) ImGui::PopStyleColor();
 
                             float last_button_x2 = ImGui::GetItemRectMax().x;
                             float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 34.0f;
-                            if (i + 1 < (int)state.buttons.size() && next_button_x2 < window_visible_x2) ImGui::SameLine();
+                            if (i + 1 < (int)displayState.buttons.size() && next_button_x2 < window_visible_x2) ImGui::SameLine();
                         }
                         
-                        if (!state.hats.empty()) {
+                        if (!displayState.hats.empty()) {
                             ImGui::Spacing(); ImGui::Separator();
                             ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "POV Hats");
-                            for (int i = 0; i < (int)state.hats.size(); i++) {
+                            for (int i = 0; i < (int)displayState.hats.size(); i++) {
                                 if (i > 0) ImGui::SameLine();
-                                DrawHatVisualizer(("Hat " + std::to_string(i)).c_str(), state.hats[i], 80.0f);
+                                DrawHatVisualizer(("Hat " + std::to_string(i)).c_str(), displayState.hats[i], 80.0f);
                             }
                         }
                         ImGui::EndChild();
@@ -908,12 +967,23 @@ int main(int argc, char* argv[]) {
                     ImGui::Spacing();
 
                     ImGui::BeginChild("HeldKeysRegion", ImVec2(0, 60), true); // 60 pixels fixed height
-                    
+
+                    // DEBUG: UI STRESS TEST INTERCEPTION ---
+                    std::vector<SDL_Scancode> displayKeys = keysCurrentlyHeld;
+                    if (debug_StressTestUI) {
+                        displayKeys.clear();
+                        // Simulate a massive 26-key rollover (Scancodes 4 to 29 represent A to Z)
+                        for (int k = 4; k <= 29; k++) {
+                            displayKeys.push_back((SDL_Scancode)k);
+                        }
+                    }
+
                     // Calculate wrapping so buttons flow nicely to the next line if many are held
                     float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
                     
-                    for (size_t i = 0; i < keysCurrentlyHeld.size(); i++) {
-                        auto scancode = keysCurrentlyHeld[i];
+                    // Use 'displayKeys' for the rendering loop
+                    for (size_t i = 0; i < displayKeys.size(); i++) {
+                        auto scancode = displayKeys[i];
 
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.8f, 0.2f, 1.0f)); 
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -924,10 +994,13 @@ int main(int argc, char* argv[]) {
                         // Wrap to next line if the next button would go off-screen
                         float last_button_x2 = ImGui::GetItemRectMax().x;
                         float next_button_x2 = last_button_x2 + style.ItemSpacing.x + 80.0f; // Estimate 80px per button
-                        if (i + 1 < keysCurrentlyHeld.size() && next_button_x2 < window_visible_x2) {
+                        
+                        // FIX: Use displayKeys.size() instead of keysCurrentlyHeld.size()
+                        if (i + 1 < displayKeys.size() && next_button_x2 < window_visible_x2) {
                             ImGui::SameLine();
                         }
                     }
+                    
                     ImGui::EndChild();
                     
                     ImGui::Separator();
