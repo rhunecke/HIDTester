@@ -24,9 +24,9 @@ jobs:
     - name: Download and Extract SDL2
       # Download official SDL2 VC development libraries and extract to thirdparty/SDL2
       run: |
-        Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-2.30.2/SDL2-devel-2.30.2-VC.zip" -OutFile "SDL2.zip"
+        Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-VC.zip" -OutFile "SDL2.zip"
         Expand-Archive -Path "SDL2.zip" -DestinationPath "thirdparty"
-        Rename-Item -Path "thirdparty\SDL2-2.30.2" -NewName "SDL2"
+        Rename-Item -Path "thirdparty\SDL2-2.32.10" -NewName "SDL2"
 
     - name: Configure CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -63,4 +63,3 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh release upload ${{ github.ref_name }} "HIDTester-${{ github.ref_name }}-Windows.zip"
-        
