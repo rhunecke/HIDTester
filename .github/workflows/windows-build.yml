@@ -27,6 +27,10 @@ jobs:
       run: |
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/libsdl-org/SDL/releases"
         $sdl2Release = $releases | Where-Object { $_.tag_name -like 'release-2.*' } | Select-Object -First 1
+        if (-not $sdl2Release) {
+          Write-Error "No SDL2 release found matching 'release-2.*'. Aborting."
+          exit 1
+        }
         $sdl2Version = $sdl2Release.tag_name -replace 'release-', ''
         $sdl2Url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdl2Version/SDL2-devel-$sdl2Version-VC.zip"
         Write-Host "Downloading SDL2 version $sdl2Version from $sdl2Url"
