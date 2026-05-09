@@ -29,14 +29,14 @@ public:
 
     // Toggles whether a specific axis should be treated as a Trigger
     void setAxisTriggerMode(int axisIndex, bool isTrigger) {
-        if (axisIndex >= 0 && axisIndex < state.axisIsTrigger.size()) {
+        if (axisIndex >= 0 && axisIndex < static_cast<int>(state.axisIsTrigger.size())) {
             state.axisIsTrigger[axisIndex] = isTrigger;
         }
     }
 
     // Returns the current mode of an axis
     bool isAxisTrigger(int axisIndex) const {
-        if (axisIndex >= 0 && axisIndex < state.axisIsTrigger.size()) {
+        if (axisIndex >= 0 && axisIndex < static_cast<int>(state.axisIsTrigger.size())) {
             return state.axisIsTrigger[axisIndex];
         }
         return false;
