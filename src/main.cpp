@@ -180,7 +180,9 @@ void OpenWebpage(const char* url) {
     // command-injection risk that system() carries when the argument is
     // ever constructed from external data.
     pid_t pid = fork();
-    if (pid == 0) {
+    if (pid < 0) {
+        std::cerr << "OpenWebpage: fork() failed." << std::endl;
+    } else if (pid == 0) {
         #ifdef __APPLE__
         execlp("open", "open", url, nullptr);
         #else
