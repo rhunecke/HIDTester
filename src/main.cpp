@@ -5,7 +5,7 @@
 #endif
 
 #if defined(__APPLE__) || defined(__linux__)
-#include <unistd.h>  // fork, execlp, _exit
+#include <unistd.h>  // fork, execlp, _exit insted of using system, change suggested by u/ap0ught
 #include <sys/types.h>
 #endif
 
@@ -176,6 +176,7 @@ void OpenWebpage(const char* url) {
     // Windows: ShellExecuteA is the native, shell-free API for opening URLs.
     ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
     #elif defined(__APPLE__) || defined(__linux__)
+    // change suggested by u/ap0ught
     // POSIX: fork + execvp bypasses the shell entirely, which avoids the
     // command-injection risk that system() carries when the argument is
     // ever constructed from external data.

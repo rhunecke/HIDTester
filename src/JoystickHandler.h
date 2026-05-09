@@ -29,6 +29,7 @@ public:
 
     // Toggles whether a specific axis should be treated as a Trigger
     void setAxisTriggerMode(int axisIndex, bool isTrigger) {
+        // improves int handling (signed vs unsigned) to prevent compiler from complaining, change suggested by u/ap0ught
         if (axisIndex >= 0 && axisIndex < static_cast<int>(state.axisIsTrigger.size())) {
             state.axisIsTrigger[axisIndex] = isTrigger;
         }
@@ -36,6 +37,7 @@ public:
 
     // Returns the current mode of an axis
     bool isAxisTrigger(int axisIndex) const {
+        // improves int handling (signed vs unsigned) to prevent compiler from complaining, change suggested by u/ap0ught
         if (axisIndex >= 0 && axisIndex < static_cast<int>(state.axisIsTrigger.size())) {
             return state.axisIsTrigger[axisIndex];
         }
