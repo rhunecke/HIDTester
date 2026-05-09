@@ -4,6 +4,11 @@
 #include <shellapi.h>
 #endif
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>  // fork, execlp, _exit
+#include <sys/types.h>
+#endif
+
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <SDL_syswm.h>
@@ -17,7 +22,6 @@
 #include <deque>
 #include <algorithm>
 #include "version.h"
-#include <cstdlib> // Required for system() command on Linux/macOS
 #include <chrono>  // Required for Macro Event Log timing
 #include <map>     // Required for tracking button states
 
@@ -165,21 +169,28 @@ void DrawHatVisualizer(const char* label, uint8_t hatState, float size = 80.0f) 
 
 /**
  * Opens a web browser with the specified URL across different operating systems.
+ * Uses platform-native APIs (no shell interpreter) to avoid command-injection risks.
  */
 void OpenWebpage(const char* url) {
     #if defined(_WIN32)
-    // Windows specific URL opening
+    // Windows: ShellExecuteA is the native, shell-free API for opening URLs.
     ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
-    #elif defined(__APPLE__)
-    // macOS specific URL opening
-    std::string command = "open ";
-    command += url;
-    system(command.c_str());
-    #elif defined(__linux__)
-    // Linux specific URL opening
-    std::string command = "xdg-open ";
-    command += url;
-    system(command.c_str());
+    #elif defined(__APPLE__) || defined(__linux__)
+    // POSIX: fork + execvp bypasses the shell entirely, which avoids the
+    // command-injection risk that system() carries when the argument is
+    // ever constructed from external data.
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "OpenWebpage: fork() failed." << std::endl;
+    } else if (pid == 0) {
+        #ifdef __APPLE__
+        execlp("open", "open", url, nullptr);
+        #else
+        execlp("xdg-open", "xdg-open", url, nullptr);
+        #endif
+        _exit(1); // reached only if execlp fails
+    }
+    // Parent continues immediately (fire-and-forget).
     #else
     std::cout << "URL opening not supported on this platform." << std::endl;
     #endif
