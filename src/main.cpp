@@ -693,7 +693,9 @@ int main(int argc, char* argv[]) {
                     }
                     ImGui::EndCombo();
                 }
-                SDL_free(joystickIds);
+                if (joystickIds) {
+                    SDL_free(joystickIds);
+                }
 
                 ImGui::SameLine(0.0f, 30.0f);
                 ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
