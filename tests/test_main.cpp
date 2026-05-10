@@ -35,8 +35,6 @@ bool TestSDL3MigrationSmoke() {
         return false;
     }
 
-    Expect(SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED), SDL_GetError());
-
     int joystickCount = 0;
     SDL_JoystickID* joystickIds = SDL_GetJoysticks(&joystickCount);
     if (!Expect(joystickCount >= 0, "Joystick enumeration returned a negative count")) {

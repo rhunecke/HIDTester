@@ -48,7 +48,7 @@ jobs:
         
         # 2. Copy the actual SDL3 library from Homebrew into our libs directory
         SDL3_PREFIX="$(brew --prefix sdl3)"
-        SDL3_DYLIB="$(find "${SDL3_PREFIX}/lib" -maxdepth 1 -name 'libSDL3*.dylib' | head -n 1)"
+        SDL3_DYLIB="$(ls "${SDL3_PREFIX}/lib"/libSDL3*.dylib 2>/dev/null | head -n 1)"
         SDL3_LINK_NAME="$(otool -L build/HIDTester | awk '/libSDL3/ { print $1; exit }')"
         test -n "$SDL3_DYLIB" || { echo "SDL3 dylib not found under ${SDL3_PREFIX}/lib"; exit 1; }
         test -n "$SDL3_LINK_NAME" || { echo "SDL3 link reference not found in build/HIDTester"; otool -L build/HIDTester; exit 1; }
