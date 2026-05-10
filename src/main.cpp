@@ -24,6 +24,7 @@
 #include "version.h"
 #include <chrono>  // Required for Macro Event Log timing
 #include <map>     // Required for tracking button states
+#include <sstream> // Required for building clipboard text
 
 /**
  * Helper to convert SDL_HAT values to human-readable strings (8-way support)
@@ -273,6 +274,22 @@ void DrawAnalogAxes(JoystickHandler& joyHandler) {
             // Display the exact raw integer value provided by the API
             ImGui::SameLine();
             ImGui::TextDisabled("%6d", rawSdlValue);
+
+            // Show the minimum deadzone percentage needed to silence this axis at rest.
+            // Only meaningful for bidirectional stick axes; triggers rest at the negative rail.
+            if (!isTrigger) {
+                float axisMinDZ = std::min(std::abs(static_cast<int>(rawSdlValue)) / 32767.0f, 1.0f);
+                ImGui::SameLine();
+                ImGui::TextDisabled("DZ\xe2\x89\xa5%.1f%%", axisMinDZ * 100.0f); // \xe2\x89\xa5 = UTF-8 for ≥
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Minimum deadzone to silence this axis at its current resting position.\n"
+                        "Float (0-1): %.4f  |  Raw: %d",
+                        axisMinDZ,
+                        static_cast<int>(axisMinDZ * 32767.0f)
+                    );
+                }
+            }
 
             ImGui::PopID(); // End of unique ID context
         }
@@ -740,6 +757,40 @@ int main(int argc, char* argv[]) {
                                       "non-trigger axes based on their current resting positions.\n"
                                       "Hold all sticks at rest and enable this to calibrate drift.\n"
                                       "Disables the manual deadzone slider while active.");
+                }
+
+                // Button to copy per-axis minimum deadzone values to the clipboard
+                ImGui::SameLine();
+                if (ImGui::Button("Copy DZ")) {
+                    if (joyHandler.isOpen()) {
+                        const JoystickState& s = joyHandler.getState();
+                        std::ostringstream oss;
+                        oss << "# HIDTester Minimum Axis Deadzone Values\n"
+                            << "# Hold all sticks/axes at rest before capturing.\n"
+                            << "# Axis  Type      MinDZ%    MinDZ(0-1)  RawValue\n";
+                        constexpr size_t LINE_BUFFER_SIZE = 128;
+                        char lineBuf[LINE_BUFFER_SIZE];
+                        for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+                            float minDZ = 0.0f;
+                            if (!s.axisIsTrigger[i]) {
+                                minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 1.0f);
+                            }
+                            snprintf(lineBuf, LINE_BUFFER_SIZE,
+                                     "  %-5d %-9s %6.2f%%   %.4f      %6d\n",
+                                     i,
+                                     s.axisIsTrigger[i] ? "Trigger" : "Stick",
+                                     minDZ * 100.0f,
+                                     minDZ,
+                                     static_cast<int>(s.sdlAxes[i]));
+                            oss << lineBuf;
+                        }
+                        SDL_SetClipboardText(oss.str().c_str());
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Copy per-axis minimum deadzone values to the clipboard.\n"
+                                      "Hold sticks at rest, then click to capture current drift values.\n"
+                                      "Paste into your game or simulator's axis calibration screen.");
                 }
 
             } else if (currentMode == AppMode::KeyboardMouse) {

@@ -77,3 +77,11 @@ else()
     # Standard Linux linking
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2 GL)
 endif()
+
+# --- OPTIONAL: Unit Tests ---
+# Build with: cmake -DBUILD_TESTS=ON ..
+option(BUILD_TESTS "Build the deadzone unit tests (no SDL required)" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
