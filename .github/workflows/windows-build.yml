@@ -21,12 +21,13 @@ jobs:
         mkdir thirdparty
         git clone --depth 1 https://github.com/ocornut/imgui.git thirdparty/imgui
 
-    - name: Download and Extract SDL2
-      # Download official SDL2 VC development libraries and extract to thirdparty/SDL2
+    - name: Download and Extract SDL3
+      # Download official SDL3 VC development libraries and extract to thirdparty/SDL3
       run: |
-        Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-VC.zip" -OutFile "SDL2.zip"
-        Expand-Archive -Path "SDL2.zip" -DestinationPath "thirdparty"
-        Rename-Item -Path "thirdparty\SDL2-2.32.10" -NewName "SDL2"
+        $SDLVersion = "3.4.8"
+        Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-$SDLVersion/SDL3-devel-$SDLVersion-VC.zip" -OutFile "SDL3.zip"
+        Expand-Archive -Path "SDL3.zip" -DestinationPath "thirdparty"
+        Rename-Item -Path "thirdparty\SDL3-$SDLVersion" -NewName "SDL3"
 
     - name: Configure CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -42,10 +43,11 @@ jobs:
         DIR_NAME="HIDTester-$VERSION-Windows"
         mkdir -p "$DIR_NAME"
         
-        # Copy the executable and the SDL2.dll to the distribution folder
+        # Copy the executable and the SDL3.dll to the distribution folder
         cp build/Release/HIDTester.exe "$DIR_NAME/"
-        cp build/Release/SDL2.dll "$DIR_NAME/" || true
+        cp build/Release/SDL3.dll "$DIR_NAME/" || true
         cp README.md "$DIR_NAME/" || true
+        cp MIGRATION.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
         
         # Windows runners use 7z to create zip archives

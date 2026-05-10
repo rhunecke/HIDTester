@@ -12,13 +12,13 @@ add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 # Define where ImGui is located
 set(IMGUI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
 
-# Tell CMake where to look for SDL2 on Windows
+# Tell CMake where to look for SDL3 on Windows
 if(WIN32)
-    # NOTE: Set this to the folder where you extracted the SDL2-devel-VC package!
-    set(SDL2_BASE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/SDL2" CACHE PATH "Base path for SDL2")
+    # NOTE: Set this to the folder where you extracted the SDL3-devel-VC package!
+    set(SDL3_BASE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/SDL3" CACHE PATH "Base path for SDL3")
     
     # Add it to the prefix path so find_package can locate the cmake config files
-    list(APPEND CMAKE_PREFIX_PATH "${SDL2_BASE_PATH}")
+    list(APPEND CMAKE_PREFIX_PATH "${SDL3_BASE_PATH}")
 endif()
 
 # Generate version header
@@ -28,8 +28,8 @@ configure_file(
 )
 
 # --- FIND PACKAGES ---
-# Find SDL2 globally for ALL operating systems
-find_package(SDL2 REQUIRED)
+# Find SDL3 globally for ALL operating systems
+find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 
 # --- DIRECTORIES & SOURCES ---
 include_directories(
@@ -45,7 +45,7 @@ endif()
 
 file(GLOB IMGUI_SOURCES 
     "${IMGUI_PATH}/*.cpp"
-    "${IMGUI_PATH}/backends/imgui_impl_sdl2.cpp"
+    "${IMGUI_PATH}/backends/imgui_impl_sdl3.cpp"
     "${IMGUI_PATH}/backends/imgui_impl_opengl3.cpp"
 )
 
@@ -62,18 +62,18 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
 # --- 3. CROSS-PLATFORM LINKING & POST-BUILD ---
 if(WIN32)
     # Windows specific linking
-    target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2 SDL2::SDL2main opengl32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 opengl32)
     
-    # Automatically copy the SDL2.dll into the build output folder next to the .exe
+    # Automatically copy the SDL3.dll into the build output folder next to the .exe
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SDL2_BASE_PATH}/lib/x64/SDL2.dll"
+        "${SDL3_BASE_PATH}/lib/x64/SDL3.dll"
         $<TARGET_FILE_DIR:${PROJECT_NAME}>
     )
 elseif(APPLE)
     # macOS specific linking frameworks
-    target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2 "-framework OpenGL" "-framework Cocoa" "-framework IOKit")
+    target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 "-framework OpenGL" "-framework Cocoa" "-framework IOKit")
 else()
     # Standard Linux linking
-    target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2 GL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 GL)
 endif()
