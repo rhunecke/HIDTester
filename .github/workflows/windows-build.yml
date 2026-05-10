@@ -35,6 +35,9 @@ jobs:
     - name: Build Application
       run: cmake --build build --config Release -j 4
 
+    - name: Run Tests
+      run: ctest --test-dir build --build-config Release --output-on-failure
+
     - name: Package Release
       # Using bash shell here to keep the zip/cp syntax consistent with your Linux/macOS workflows
       shell: bash 
