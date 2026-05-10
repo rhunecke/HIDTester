@@ -8,8 +8,6 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-
 # --- PATH CONFIGURATIONS ---
 # Define where ImGui is located
 set(IMGUI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
@@ -60,6 +58,12 @@ add_executable(${PROJECT_NAME} WIN32
 
 # --- 2. CONFIGURE TARGET ---
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Silence MSVC warnings about deprecated C runtime functions that are used
+# internally by third-party libraries (ImGui, SDL2). Scoped to this target only.
+if(MSVC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 # --- 3. CROSS-PLATFORM LINKING & POST-BUILD ---
 if(WIN32)

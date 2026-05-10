@@ -73,3 +73,17 @@ cmake --build . --config Release
 ```
 
 See [MIGRATION.md](MIGRATION.md) for the SDL3 migration note.
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, and feature requests are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+## 🔒 Security
+
+If you discover a security vulnerability, please follow the responsible disclosure process described in [SECURITY.md](SECURITY.md). Do not open a public issue.
+
+## 📄 License
+
+This project is licensed under the [GNU GPL v3.0](LICENSE).
