@@ -60,7 +60,7 @@ add_executable(${PROJECT_NAME} WIN32
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # Silence MSVC warnings about deprecated C runtime functions that are used
-# internally by third-party libraries (ImGui, SDL2). Scoped to this target only.
+# internally by third-party libraries (ImGui, SDL3). Scoped to this target only.
 if(MSVC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
