@@ -16,15 +16,33 @@ struct JoystickState {
 
 class JoystickHandler {
 public:
-    JoystickHandler() : joystick(nullptr), deadzoneLimit(0) {}
-    
-    ~JoystickHandler() { 
-        close(); 
+    JoystickHandler() : joystick(nullptr) {}
+
+    ~JoystickHandler() {
+        close();
     }
 
-    // Set the software deadzone threshold (0 to 32767)
-    void setDeadzone(int16_t limit) {
-        deadzoneLimit = limit;
+    /** Set the global software deadzone (0.0 – 0.25, normalised fraction).
+     *  Applies the same value to every axis at once. */
+    void setDeadzone(float f) {
+        for (float& dz : axisDeadzones) {
+            dz = f;
+        }
+    }
+
+    /** Set the deadzone for a single axis (0.0 – 0.25, normalised fraction). */
+    void setAxisDeadzone(int axisIndex, float f) {
+        if (axisIndex >= 0 && axisIndex < static_cast<int>(axisDeadzones.size())) {
+            axisDeadzones[axisIndex] = f;
+        }
+    }
+
+    /** Return the current deadzone fraction for a single axis. */
+    float getAxisDeadzone(int axisIndex) const {
+        if (axisIndex >= 0 && axisIndex < static_cast<int>(axisDeadzones.size())) {
+            return axisDeadzones[axisIndex];
+        }
+        return 0.0f;
     }
 
     // Toggles whether a specific axis should be treated as a Trigger
@@ -54,9 +72,12 @@ public:
             state.sdlAxes.assign(numAxes, 0);
             state.buttons.assign(SDL_JoystickNumButtons(joystick), false);
             state.hats.assign(SDL_JoystickNumHats(joystick), SDL_HAT_CENTERED);
-            
+
             // Initialize all axes as default bidirectional sticks
             state.axisIsTrigger.assign(numAxes, false);
+
+            // Initialize per-axis deadzones to zero
+            axisDeadzones.assign(numAxes, 0.0f);
 
             // Mark all axes as pending for the event-driven auto-detection
             axisAutoDetectPending.assign(numAxes, true);
@@ -126,23 +147,21 @@ public:
                 // ==========================================
                 // TRIGGER LOGIC (Unidirectional: 0.0 to 1.0)
                 // ==========================================
-                
+
                 float normalizedValue = 0.0f;
-                float dzFloat = 0.0f;
+                float dzFloat = axisDeadzones[i]; // normalised fraction, direct use
 
 #ifdef __APPLE__
                 // macOS API reports triggers purely from 0 to 32767.
                 // std::max ensures slight negative jitter around 0 doesn't break the math.
                 normalizedValue = std::max(0.0f, (float)rawSdlValue) / 32767.0f;
-                dzFloat = deadzoneLimit / 32767.0f;
 #else
                 // Windows/Linux API reports triggers from -32768 to 32767.
                 normalizedValue = (rawSdlValue + 32768.0f) / 65535.0f;
-                dzFloat = deadzoneLimit / 65535.0f;
 #endif
-                
+
                 float finalOutput = 0.0f;
-                
+
                 // 3. Apply Scaled Deadzone Math starting from the bottom
                 if (normalizedValue > dzFloat) {
                     finalOutput = (normalizedValue - dzFloat) / (1.0f - dzFloat);
@@ -155,26 +174,26 @@ public:
                 // ==========================================
                 // STICK LOGIC (Bidirectional: -1.0 to 1.0)
                 // ==========================================
-                
+
                 // Normalize raw value to a float between -1.0f and 1.0f
                 float normalizedValue = rawSdlValue / 32767.0f;
-                
-                // Normalize the deadzone limit to a float
-                float dzFloat = deadzoneLimit / 32767.0f;
-                
+
+                // Per-axis deadzone fraction (0.0 – 0.25)
+                float dzFloat = axisDeadzones[i];
+
                 float finalOutput = 0.0f;
-                
+
                 // Apply Scaled Deadzone Math (Professional Game Engine Style)
                 if (std::abs(normalizedValue) > dzFloat) {
                     // Determine direction (positive or negative axis movement)
                     float sign = (normalizedValue > 0.0f) ? 1.0f : -1.0f;
-                    
+
                     // Rescale the remaining physical range to a smooth 0.0 to 1.0 logical range
                     finalOutput = sign * ((std::abs(normalizedValue) - dzFloat) / (1.0f - dzFloat));
                 }
 
                 // Store the smoothed, deadzone-processed value
-                state.axes[i] = finalOutput;   
+                state.axes[i] = finalOutput;
             }
         }
         
@@ -196,6 +215,6 @@ public:
 private:
     SDL_Joystick* joystick;
     JoystickState state;
-    int16_t deadzoneLimit; 
-    std::vector<bool> axisAutoDetectPending; // Tracks which axes still need initial classification
+    std::vector<float> axisDeadzones;            // Per-axis deadzone fraction (0.0 – 0.25)
+    std::vector<bool> axisAutoDetectPending;     // Tracks which axes still need initial classification
 };
