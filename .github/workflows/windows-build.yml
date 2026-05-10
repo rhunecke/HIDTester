@@ -25,8 +25,8 @@ jobs:
       # Dynamically fetches the latest SDL2 release from GitHub so the build
       # always uses the most up-to-date patched version.
       run: |
-        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/libsdl-org/SDL/releases"
-        $sdl2Release = $releases | Where-Object { $_.tag_name -like 'release-2.*' } | Select-Object -First 1
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/libsdl-org/SDL/releases?per_page=100"
+        $sdl2Release = $releases | Where-Object { $_.tag_name -like 'release-2.*' -and -not $_.draft -and -not $_.prerelease } | Select-Object -First 1
         if (-not $sdl2Release) {
           Write-Error "No SDL2 release found matching 'release-2.*'. Aborting."
           exit 1
