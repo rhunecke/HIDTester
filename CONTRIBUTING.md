@@ -44,7 +44,7 @@ Feature requests are welcome. Open a [GitHub Issue](../../issues/new) and descri
 
 ### Prerequisites
 
-See the **Setup & Installation for Developers** section in [README.md](README.md#️-setup--installation-for-developers) for the full list of required tools and dependencies per platform.
+See the **Setup & Installation for Developers** section in [README.md](README.md#setup--installation-for-developers) for the full list of required tools and dependencies per platform.
 
 ### Building
 
