@@ -683,8 +683,31 @@ int main(int argc, char* argv[]) {
                 // --- Float/Raw Deadzone Slider ---
                 ImGui::SameLine(0.0f, 30.0f);
                 static float deadzoneFloat = 0.0f; // Range: 0.0 to 0.25 (0% to 25%)
+                static bool autoMinDeadzone = false; // Auto-compute minimum deadzone from current axis values
+
+                // When auto-mode is active, continuously compute the minimum deadzone
+                // needed to make all non-trigger axes report zero at their current resting positions.
+                if (autoMinDeadzone && joyHandler.isOpen()) {
+                    const JoystickState& s = joyHandler.getState();
+                    int maxRaw = 0;
+                    for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+                        if (!s.axisIsTrigger[i]) {
+                            int absVal = std::abs(static_cast<int>(s.sdlAxes[i]));
+                            if (absVal > maxRaw) {
+                                maxRaw = absVal;
+                            }
+                        }
+                    }
+                    deadzoneFloat = std::min(maxRaw / 32767.0f, 0.25f);
+                    joyHandler.setDeadzone(static_cast<int16_t>(deadzoneFloat * 32767.0f));
+                }
 
                 ImGui::SetNextItemWidth(120);
+
+                // Disable manual slider while auto-mode is active
+                if (autoMinDeadzone) {
+                    ImGui::BeginDisabled();
+                }
 
                 // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
                 // are strictly clamped between our min (0.0f) and max (0.25f) limits.
@@ -692,6 +715,10 @@ int main(int argc, char* argv[]) {
                     // Convert the float representation back to the 16-bit hardware scale (0 to 32767)
                     int16_t rawLimit = static_cast<int16_t>(deadzoneFloat * 32767.0f);
                     joyHandler.setDeadzone(rawLimit);
+                }
+
+                if (autoMinDeadzone) {
+                    ImGui::EndDisabled();
                 }
 
                 // Combined Tooltip with clear UI instructions for manual input
@@ -704,6 +731,16 @@ int main(int argc, char* argv[]) {
                 // Display the exact raw hardware value next to it for diagnostics
                 ImGui::SameLine();
                 ImGui::TextDisabled("(Raw: %d)", static_cast<int>(deadzoneFloat * 32767.0f));
+
+                // Checkbox to automatically set the minimum deadzone to zero all non-trigger axes
+                ImGui::SameLine();
+                ImGui::Checkbox("Min DZ", &autoMinDeadzone);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Automatically sets the minimum deadzone needed to zero all\n"
+                                      "non-trigger axes based on their current resting positions.\n"
+                                      "Hold all sticks at rest and enable this to calibrate drift.\n"
+                                      "Disables the manual deadzone slider while active.");
+                }
 
             } else if (currentMode == AppMode::KeyboardMouse) {
                 // Render Keyboard/Mouse specific controls
