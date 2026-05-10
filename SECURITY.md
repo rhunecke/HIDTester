@@ -36,7 +36,7 @@ Please provide as much of the following information as possible to help us under
 
 ## Scope
 
-This security policy covers the source code of HID Tester itself. Vulnerabilities in third-party dependencies (SDL2, Dear ImGui) should be reported directly to their respective maintainers.
+This security policy covers the source code of HID Tester itself. Vulnerabilities in third-party dependencies (SDL3, Dear ImGui) should be reported directly to their respective maintainers.
 
 ## Out of Scope
 
