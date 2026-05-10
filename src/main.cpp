@@ -5,7 +5,7 @@
 #endif
 
 #if defined(__APPLE__) || defined(__linux__)
-#include <unistd.h>  // fork, execlp, _exit insted of using system, change suggested by u/ap0ught
+#include <unistd.h>  // fork, execlp, _exit instead of using system, change suggested by u/ap0ught
 #include <sys/types.h>
 #endif
 
