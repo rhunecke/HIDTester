@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.10)
 # Central version management
 project(HIDTester VERSION 1.3.3 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -76,4 +78,20 @@ elseif(APPLE)
 else()
     # Standard Linux linking
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 GL)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(HIDTesterTests
+        tests/test_main.cpp
+    )
+
+    target_include_directories(HIDTesterTests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(HIDTesterTests PRIVATE SDL3::SDL3)
+
+    add_test(NAME HIDTesterTests COMMAND HIDTesterTests)
+    set_tests_properties(HIDTesterTests PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy"
+    )
 endif()

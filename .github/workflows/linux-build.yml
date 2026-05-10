@@ -54,6 +54,9 @@ jobs:
     - name: Build Application
       run: cmake --build build --config Release -j 4
 
+    - name: Run Tests
+      run: ctest --test-dir build --output-on-failure
+
     - name: Package Release
       run: |
         VERSION="${{ github.ref_name }}"
