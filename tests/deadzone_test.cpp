@@ -5,7 +5,8 @@
  * These tests cover:
  *   - Bidirectional (stick) deadzone: scaled removal from centre
  *   - Unidirectional (trigger) deadzone: scaled removal from bottom
- *   - Min DZ computation: maximum absolute resting value across non-trigger axes
+ *   - Per-axis DZ computation: minimum deadzone for a single axis
+ *   - "Zero Out DZ" computation: maximum absolute resting value across non-trigger axes
  *   - Edge cases: zero input, full-scale input, exact deadzone boundary, INT16_MIN
  *
  * No SDL or ImGui dependency is required; the math is reproduced directly.
@@ -60,8 +61,22 @@ static float applyTriggerDeadzone(int16_t rawSdlValue, int16_t deadzoneLimit)
 }
 
 /**
- * @brief Computes the minimum deadzone (0-1) needed to silence a set of
+ * @brief Computes the minimum deadzone [0, 0.25] needed to silence a single
+ *        non-trigger axis at its current resting position.
+ *        This is the value applied by the [Zero] button and "Zero Out DZ" mode.
+ * @param rawSdlValue  Raw SDL axis value from a non-trigger axis.
+ * @return Minimum deadzone as a normalised float, clamped to [0, 0.25].
+ */
+static float computeAxisDeadzone(int16_t rawSdlValue)
+{
+    float dz = std::abs(static_cast<int>(rawSdlValue)) / 32767.0f;
+    return std::min(dz, 0.25f);
+}
+
+/**
+ * @brief Computes the minimum deadzone [0, 0.25] needed to silence a set of
  *        non-trigger axes at their current resting positions.
+ *        Useful for deriving a single global DZ that covers all axes.
  * @param rawValues  Vector of raw SDL axis values from non-trigger axes.
  * @return Minimum deadzone as a normalised float, clamped to [0, 0.25].
  */
@@ -244,6 +259,70 @@ static void testMinDeadzoneZeroesAxes()
     check(allZero, "computed min DZ silences all resting stick axes");
 }
 
+static void testPerAxisDeadzone()
+{
+    printf("\n[Per-Axis DZ (Zero Out DZ)]\n");
+
+    // Axis at rest (0) → DZ = 0
+    check(nearEq(computeAxisDeadzone(0), 0.0f),
+          "axis at 0 → per-axis DZ 0.0");
+
+    // Drift of +100 → 100/32767 ≈ 0.00305
+    {
+        float expected = 100.0f / 32767.0f;
+        check(nearEq(computeAxisDeadzone(100), expected, 1e-5f),
+              "drift of +100 → per-axis DZ 100/32767");
+    }
+
+    // Drift of -4096 → 4096/32767 ≈ 0.125 (12.5%)
+    {
+        float expected = 4096.0f / 32767.0f;
+        check(nearEq(computeAxisDeadzone(static_cast<int16_t>(-4096)), expected, 1e-5f),
+              "drift of -4096 → per-axis DZ ≈ 0.125");
+    }
+
+    // Extreme value (full scale) → clamped to 0.25
+    check(nearEq(computeAxisDeadzone(32767), 0.25f),
+          "full-scale drift clamped to 0.25");
+
+    // INT16_MIN (-32768): abs = 32768 → clamped to 0.25, no overflow
+    check(nearEq(computeAxisDeadzone(static_cast<int16_t>(-32768)), 0.25f),
+          "INT16_MIN (-32768) clamped to 0.25, no overflow");
+
+    // Symmetry: negative and positive same magnitude → same DZ
+    check(nearEq(computeAxisDeadzone(static_cast<int16_t>(-781)),
+                 computeAxisDeadzone(static_cast<int16_t>(781)), 1e-6f),
+          "symmetric drift: -781 and +781 produce identical per-axis DZ");
+
+    // Per-axis DZ silences the axis that produced it
+    {
+        int16_t raw = static_cast<int16_t>(-4096);
+        float dz = computeAxisDeadzone(raw);
+        int16_t dzLimit = static_cast<int16_t>(dz * 32767.0f);
+        check(nearEq(applyStickDeadzone(raw, dzLimit), 0.0f, 1e-3f),
+              "per-axis DZ from -4096 silences that axis");
+    }
+
+    // Each axis in a set can be zeroed with its own individual DZ
+    {
+        struct Axis { int16_t raw; };
+        std::vector<Axis> axes = {
+            {static_cast<int16_t>(-512)},
+            {static_cast<int16_t>(5982)},
+            {static_cast<int16_t>(781)}
+        };
+        bool allZero = true;
+        for (auto& ax : axes) {
+            float dz = computeAxisDeadzone(ax.raw);
+            int16_t dzLimit = static_cast<int16_t>(dz * 32767.0f);
+            if (!nearEq(applyStickDeadzone(ax.raw, dzLimit), 0.0f, 1e-3f)) {
+                allZero = false;
+            }
+        }
+        check(allZero, "per-axis DZ individually silences each drifting axis");
+    }
+}
+
 // ============================================================
 // Entry point
 // ============================================================
@@ -256,6 +335,7 @@ int main()
     testTriggerDeadzone();
     testMinDeadzoneComputation();
     testMinDeadzoneZeroesAxes();
+    testPerAxisDeadzone();
 
     printf("\n---\nResults: %d passed, %d failed\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;
