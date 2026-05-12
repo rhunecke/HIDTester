@@ -67,11 +67,21 @@ public:
         joystick = SDL_OpenJoystick(deviceId);
         
         if (joystick) {
-            int numAxes = SDL_GetNumJoystickAxes(joystick);
+            int numAxes    = SDL_GetNumJoystickAxes(joystick);
+            int numButtons = SDL_GetNumJoystickButtons(joystick);
+            int numHats    = SDL_GetNumJoystickHats(joystick);
+
+            // SDL3 returns -1 on failure; treat that as an open() failure.
+            if (numAxes < 0 || numButtons < 0 || numHats < 0) {
+                SDL_CloseJoystick(joystick);
+                joystick = nullptr;
+                return false;
+            }
+
             state.axes.assign(numAxes, 0.0f);
             state.sdlAxes.assign(numAxes, 0);
-            state.buttons.assign(SDL_GetNumJoystickButtons(joystick), false);
-            state.hats.assign(SDL_GetNumJoystickHats(joystick), SDL_HAT_CENTERED);
+            state.buttons.assign(static_cast<size_t>(numButtons), false);
+            state.hats.assign(static_cast<size_t>(numHats), SDL_HAT_CENTERED);
 
             // Initialize all axes as default bidirectional sticks
             state.axisIsTrigger.assign(numAxes, false);

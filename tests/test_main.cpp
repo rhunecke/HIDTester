@@ -3,7 +3,7 @@
 #include <iostream>
 #include <string>
 
-#include "src/HatUtils.h"
+#include "HatUtils.h"
 
 namespace {
 

@@ -93,6 +93,7 @@ if(BUILD_TESTING)
 
     target_include_directories(HIDTesterTests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
     )
     target_link_libraries(HIDTesterTests PRIVATE SDL3::SDL3)
 
