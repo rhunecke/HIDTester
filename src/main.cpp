@@ -825,7 +825,7 @@ int main(int argc, char* argv[]) {
                         for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
                             float minDZ = 0.0f;
                             if (!s.axisIsTrigger[i]) {
-                                minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 1.0f);
+                                minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
                             }
                             snprintf(lineBuf, LINE_BUFFER_SIZE,
                                      "  %-5d %-9s %6.2f%%   %.4f      %6d\n",
