@@ -132,9 +132,9 @@ static void testStickDeadzone()
     check(nearEq(applyStickDeadzone(32767, 0), 1.0f),
           "full positive deflection, zero DZ → 1.0");
 
-    // Full negative deflection, zero deadzone → -1.0
+    // Full negative deflection, zero deadzone → exactly -1.0
     check(applyStickDeadzone(-32767, 0) < -0.999f,
-          "full negative deflection, zero DZ → near -1.0");
+          "full negative deflection (-32767), zero DZ → -1.0");
 
     // Inside deadzone → exactly 0.0
     check(nearEq(applyStickDeadzone(100, 1000), 0.0f),
