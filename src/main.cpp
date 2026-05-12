@@ -25,6 +25,7 @@
 #include "version.h"
 #include <chrono>  // Required for Macro Event Log timing
 #include <map>     // Required for tracking button states
+#include <sstream> // Required for building clipboard text
 
 // --- Data structure for the unified macro event log (Joysticks) ---
 struct InputEvent {
@@ -167,6 +168,7 @@ void OpenWebpage(const char* url) {
  * Visualizes Analog Axes with ProgressBars.
  * Displays both the smoothed logical value and the raw 16-bit hardware data.
  * Allows toggling between Bidirectional (Stick) and Unidirectional (Trigger) modes.
+ * Each axis exposes its own deadzone slider and a [Zero] button to capture resting drift.
  */
 void DrawAnalogAxes(JoystickHandler& joyHandler) {
     const JoystickState& state = joyHandler.getState();
@@ -178,12 +180,27 @@ void DrawAnalogAxes(JoystickHandler& joyHandler) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
                 "Use the 'Trg' checkbox if an axis rests at its minimum value (e.g. Xbox RT/LT).\n"
-                "The progress bar shows the smoothed logical input (respecting your deadzone)."
+                "The progress bar shows the smoothed logical input (respecting your deadzone).\n"
+                "Drag the per-axis DZ slider or click [Zero] to capture the current resting drift."
             );
         }
 
         ImGui::Separator();
         ImGui::Spacing();
+
+        // Per-axis DZ float state — persists across frames; synced from JoystickHandler.
+        static std::vector<float> axisDeadzoneFloats;
+        if ((int)axisDeadzoneFloats.size() != numAxes) {
+            axisDeadzoneFloats.assign(numAxes, 0.0f);
+        }
+        // Sync any external updates (e.g. "Zero Out DZ" auto-mode, global DZ slider)
+        for (int j = 0; j < numAxes; j++) {
+            axisDeadzoneFloats[j] = joyHandler.getAxisDeadzone(j);
+        }
+
+        // Off-green colour (R=80, G=140, B=60, A=180): a muted sage green at ~70% opacity,
+        // visually distinct from the bright active green (R=0, G=204, B=77) used by the bar.
+        const ImU32 DZ_OVERLAY_COLOR = IM_COL32(80, 140, 60, 180);
 
         for (int i = 0; i < numAxes; i++) {
             // ImGui needs a unique ID for repeating elements in a loop to track clicks properly
@@ -228,17 +245,81 @@ void DrawAnalogAxes(JoystickHandler& joyHandler) {
                 }
             }
 
-            // Draw the progress bar with the smoothed float text overlay
+            // Draw the progress bar with the smoothed float text overlay.
+            // Leave ~220 px on the right for raw value, DZ slider, and [Zero] button.
             char overlayText[32];
             snprintf(overlayText, sizeof(overlayText), "%.4f", smoothedFloat);
 
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-            ImGui::ProgressBar(barFillLength, ImVec2(-60, 16), overlayText);
+            ImGui::ProgressBar(barFillLength, ImVec2(-220, 16), overlayText);
             ImGui::PopStyleColor();
+
+            // --- Off-green dead-zone region overlay ---
+            {
+                ImVec2 bar_min = ImGui::GetItemRectMin();
+                ImVec2 bar_max = ImGui::GetItemRectMax();
+                float bar_w = bar_max.x - bar_min.x;
+                float dzOverlay = axisDeadzoneFloats[i];
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                if (isTrigger) {
+                    // DZ region sits at the left (unpressed) end of the trigger bar
+                    float dz_px = bar_w * dzOverlay;
+                    if (dz_px > 0.5f) {
+                        dl->AddRectFilled(bar_min, ImVec2(bar_min.x + dz_px, bar_max.y), DZ_OVERLAY_COLOR);
+                    }
+                } else {
+                    // DZ region straddles the centre of the stick bar
+                    float cx = bar_min.x + bar_w * 0.5f;
+                    float dz_half = bar_w * dzOverlay * 0.5f;
+                    if (dz_half > 0.5f) {
+                        dl->AddRectFilled(
+                            ImVec2(cx - dz_half, bar_min.y),
+                            ImVec2(cx + dz_half, bar_max.y),
+                            DZ_OVERLAY_COLOR);
+                    }
+                }
+            }
 
             // Display the exact raw integer value provided by the API
             ImGui::SameLine();
             ImGui::TextDisabled("%6d", rawSdlValue);
+
+            // --- Per-axis DZ slider ---
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            float& dzF = axisDeadzoneFloats[i];
+            if (ImGui::SliderFloat("##dz", &dzF, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
+                joyHandler.setAxisDeadzone(i, dzF);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Per-axis deadzone (0 – 25%%).\n"
+                                  "Drag to adjust; click [Zero] to auto-set from resting value.\n"
+                                  "[Tip: CTRL+Click to type an exact value]");
+            }
+
+            // --- [Zero] button — capture resting drift for this axis ---
+            ImGui::SameLine();
+            bool disableZero = isTrigger; // Triggers rest at their rail; DZ is not useful
+            if (disableZero) ImGui::BeginDisabled();
+            if (ImGui::Button("Zero")) {
+                float minDZ = std::min(std::abs(static_cast<int>(rawSdlValue)) / 32767.0f, 0.25f);
+                dzF = minDZ;
+                joyHandler.setAxisDeadzone(i, minDZ);
+            }
+            if (disableZero) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) {
+                if (isTrigger) {
+                    ImGui::SetTooltip("Not applicable for Trigger axes.");
+                } else {
+                    float minDZ = std::min(std::abs(static_cast<int>(rawSdlValue)) / 32767.0f, 0.25f);
+                    ImGui::SetTooltip(
+                        "Set this axis's deadzone to its current resting value.\n"
+                        "Hold the stick at rest, then click.\n"
+                        "Current resting drift: %.4f (%.1f%%)  Raw: %d",
+                        minDZ, minDZ * 100.0f, static_cast<int>(rawSdlValue));
+                }
+            }
 
             ImGui::PopID(); // End of unique ID context
         }
@@ -666,30 +747,103 @@ int main(int argc, char* argv[]) {
                 ImGui::SameLine(0.0f, 30.0f);
                 ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
 
-                // --- Float/Raw Deadzone Slider ---
+                // --- Float Deadzone Slider (Global DZ) ---
                 ImGui::SameLine(0.0f, 30.0f);
                 static float deadzoneFloat = 0.0f; // Range: 0.0 to 0.25 (0% to 25%)
+                static bool autoMinDeadzone = false; // Zero Out DZ mode: set per-axis DZ from resting values
+
+                // When "Zero Out DZ" is active, every frame set each non-trigger axis's
+                // deadzone independently to its own current resting absolute value.
+                if (autoMinDeadzone && joyHandler.isOpen()) {
+                    const JoystickState& s = joyHandler.getState();
+                    int maxRaw = 0;
+                    for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+                        if (!s.axisIsTrigger[i]) {
+                            // Per-axis: silence each axis to its own resting value
+                            float perAxisDZ = std::min(
+                                std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
+                            joyHandler.setAxisDeadzone(i, perAxisDZ);
+                            // Track the largest for the global slider display
+                            int absVal = std::abs(static_cast<int>(s.sdlAxes[i]));
+                            if (absVal > maxRaw) maxRaw = absVal;
+                        }
+                    }
+                    // Keep global slider in sync with the largest per-axis value
+                    deadzoneFloat = std::min(maxRaw / 32767.0f, 0.25f);
+                }
 
                 ImGui::SetNextItemWidth(120);
 
-                // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
-                // are strictly clamped between our min (0.0f) and max (0.25f) limits.
-                if (ImGui::SliderFloat("Deadzone", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
-                    // Convert the float representation back to the 16-bit hardware scale (0 to 32767)
-                    int16_t rawLimit = static_cast<int16_t>(deadzoneFloat * 32767.0f);
-                    joyHandler.setDeadzone(rawLimit);
+                // Disable manual slider while Zero Out DZ is active
+                if (autoMinDeadzone) {
+                    ImGui::BeginDisabled();
                 }
 
-                // Combined Tooltip with clear UI instructions for manual input
+                // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
+                // are strictly clamped between our min (0.0f) and max (0.25f) limits.
+                if (ImGui::SliderFloat("Global DZ", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
+                    // Apply the same deadzone to all axes at once
+                    joyHandler.setDeadzone(deadzoneFloat);
+                }
+
+                if (autoMinDeadzone) {
+                    ImGui::EndDisabled();
+                }
+
+                // Tooltip for the global DZ slider
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Filters out small axis movements near the center to prevent jitter.\n"
-                    "Shown as normalized float (e.g., 0.100 = 10%%) and raw 16-bit integer.\n"
+                    ImGui::SetTooltip("Global deadzone applied to all axes at once.\n"
+                    "Drag to set; per-axis sliders in the axis list allow finer control.\n"
                     "[Tip: CTRL+Click on the slider to type an exact value]");
                 }
 
-                // Display the exact raw hardware value next to it for diagnostics
+                // Display the percentage next to the slider
                 ImGui::SameLine();
-                ImGui::TextDisabled("(Raw: %d)", static_cast<int>(deadzoneFloat * 32767.0f));
+                ImGui::TextDisabled("(%.1f%%)", deadzoneFloat * 100.0f);
+
+                // Checkbox to automatically zero out each axis to its own resting drift value
+                ImGui::SameLine();
+                ImGui::Checkbox("Zero Out DZ", &autoMinDeadzone);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Automatically sets each stick axis's deadzone to its\n"
+                                      "current resting value, silencing individual drift.\n"
+                                      "Hold all sticks at rest, then enable this.\n"
+                                      "Disables the Global DZ slider while active.");
+                }
+
+                // Button to copy per-axis minimum deadzone values to the clipboard
+                ImGui::SameLine();
+                if (ImGui::Button("Copy DZ")) {
+                    if (joyHandler.isOpen()) {
+                        const JoystickState& s = joyHandler.getState();
+                        std::ostringstream oss;
+                        oss << "# HIDTester Minimum Axis Deadzone Values\n"
+                            << "# Hold all sticks/axes at rest before capturing.\n"
+                            << "# Axis  Type      MinDZ%    MinDZ(0-1)  RawValue\n";
+                        constexpr size_t LINE_BUFFER_SIZE = 128;
+                        char lineBuf[LINE_BUFFER_SIZE];
+                        for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+                            float minDZ = 0.0f;
+                            if (!s.axisIsTrigger[i]) {
+                                minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 1.0f);
+                            }
+                            snprintf(lineBuf, LINE_BUFFER_SIZE,
+                                     "  %-5d %-9s %6.2f%%   %.4f      %6d\n",
+                                     i,
+                                     s.axisIsTrigger[i] ? "Trigger" : "Stick",
+                                     minDZ * 100.0f,
+                                     minDZ,
+                                     static_cast<int>(s.sdlAxes[i]));
+                            oss << lineBuf;
+                        }
+                        SDL_SetClipboardText(oss.str().c_str());
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Copy per-axis minimum deadzone values to the clipboard.\n"
+                                      "Hold sticks at rest, then click to capture current drift values.\n"
+                                      "Paste into your game or simulator's axis calibration screen.");
+                }
 
             } else if (currentMode == AppMode::KeyboardMouse) {
                 // Render Keyboard/Mouse specific controls
