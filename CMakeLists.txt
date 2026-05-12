@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Central version management
-project(HIDTester VERSION 1.3.3 LANGUAGES CXX)
+project(HIDTester VERSION 1.4.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -84,6 +84,8 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 GL)
 endif()
 
+# --- OPTIONAL: SDL3 smoke/unit tests (require SDL3) ---
+# Built automatically when BUILD_TESTING is ON (the CTest default).
 if(BUILD_TESTING)
     add_executable(HIDTesterTests
         tests/test_main.cpp
@@ -98,4 +100,11 @@ if(BUILD_TESTING)
     set_tests_properties(HIDTesterTests PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy"
     )
+endif()
+
+# --- OPTIONAL: Deadzone unit tests (no SDL required) ---
+# Build with: cmake -DBUILD_TESTS=ON ..
+option(BUILD_TESTS "Build the deadzone unit tests (no SDL required)" OFF)
+if(BUILD_TESTS)
+    add_subdirectory(tests)
 endif()
