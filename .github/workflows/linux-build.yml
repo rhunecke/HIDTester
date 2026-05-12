@@ -26,13 +26,36 @@ jobs:
     - name: Install Linux Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake g++ libsdl2-dev libgl1-mesa-dev
+        sudo apt-get install -y \
+          cmake g++ ninja-build curl \
+          libasound2-dev libdbus-1-dev libdecor-0-dev libdrm-dev libgbm-dev \
+          libgl1-mesa-dev libibus-1.0-dev libpulse-dev libsndio-dev libudev-dev \
+          libwayland-dev libx11-dev libxcursor-dev libxext-dev libxfixes-dev \
+          libxi-dev libxkbcommon-dev libxrandr-dev libxrender-dev libxss-dev
+
+    - name: Build and Install SDL3
+      run: |
+        SDL3_VERSION="3.4.8"
+        curl -L "https://github.com/libsdl-org/SDL/releases/download/release-${SDL3_VERSION}/SDL3-${SDL3_VERSION}.tar.gz" -o SDL3.tar.gz
+        tar -xzf SDL3.tar.gz
+        cmake -S "SDL3-${SDL3_VERSION}" -B SDL3-build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$PWD/sdl3-install" \
+          -DSDL_STATIC=OFF \
+          -DSDL_SHARED=ON \
+          -DSDL_TEST_LIBRARY=OFF \
+          -DSDL_X11_XTEST=OFF
+        cmake --build SDL3-build
+        cmake --install SDL3-build
 
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/sdl3-install"
 
     - name: Build Application
       run: cmake --build build --config Release -j 4
+
+    - name: Run Tests
+      run: ctest --test-dir build --output-on-failure
 
     - name: Package Release
       run: |
@@ -43,6 +66,7 @@ jobs:
         
         cp build/HIDTester "$DIR_NAME/"
         cp README.md "$DIR_NAME/" || true
+        cp MIGRATION.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
 
         zip -r "$DIR_NAME.zip" "$DIR_NAME/"
