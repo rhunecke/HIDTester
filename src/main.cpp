@@ -464,6 +464,10 @@ int main(int argc, char* argv[]) {
     static bool show_about_window = false;
     bool deviceOpened = false;
 
+    // Joystick list cache — rebuilt only on SDL_EVENT_JOYSTICK_ADDED/REMOVED events.
+    std::vector<SDL_JoystickID> cachedJoystickIds;
+    bool joystickListDirty = true; // true forces an initial population
+
     std::vector<std::deque<float>> axisHistory;
 
     // Debug Stress Test
@@ -497,6 +501,11 @@ int main(int argc, char* argv[]) {
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT) done = true;
+
+            // Mark the cached joystick list stale on device hotplug events.
+            if (event.type == SDL_EVENT_JOYSTICK_ADDED || event.type == SDL_EVENT_JOYSTICK_REMOVED) {
+                joystickListDirty = true;
+            }
 
             // Keyboard Event Tracking
             if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
@@ -565,6 +574,18 @@ int main(int argc, char* argv[]) {
             if (event.type == SDL_EVENT_MOUSE_WHEEL) {
                 mouseState.wheelDelta = event.wheel.integer_y; // Positive is up, negative is down
             }
+        }
+
+        // Refresh the cached joystick list whenever a hotplug event was received.
+        if (joystickListDirty) {
+            int nJoysticksFresh = 0;
+            SDL_JoystickID* freshIds = SDL_GetJoysticks(&nJoysticksFresh);
+            cachedJoystickIds.clear();
+            if (freshIds && nJoysticksFresh > 0) {
+                cachedJoystickIds.assign(freshIds, freshIds + nJoysticksFresh);
+            }
+            SDL_free(freshIds);
+            joystickListDirty = false;
         }
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -692,12 +713,12 @@ int main(int argc, char* argv[]) {
             if (currentMode == AppMode::Joystick) {
                 ImGui::Text("Device:");
                 ImGui::SetNextItemWidth(300);
-                int nJoysticks = 0;
-                SDL_JoystickID* joystickIds = SDL_GetJoysticks(&nJoysticks);
+                int nJoysticks = static_cast<int>(cachedJoystickIds.size());
+                const SDL_JoystickID* joystickIds = cachedJoystickIds.data();
 
                 // --- Dynamic Dropdown Label ---
                 std::string currentNameStr = "Select a device...";
-                if (!joystickIds || nJoysticks == 0) {
+                if (nJoysticks == 0) {
                     currentNameStr = "No Device Detected";
                 } else {
                     for (int i = 0; i < nJoysticks; i++) {
@@ -739,9 +760,6 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     ImGui::EndCombo();
-                }
-                if (joystickIds) {
-                    SDL_free(joystickIds);
                 }
 
                 ImGui::SameLine(0.0f, 30.0f);
