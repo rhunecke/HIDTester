@@ -95,6 +95,7 @@ public:
             // --- Auto-Detection Heuristic for Triggers ---
             // Force an immediate update to grab the real physical state 
             // the moment the device is initialized.
+            SDL_PumpEvents();
             SDL_UpdateJoysticks();
             
             for (int i = 0; i < numAxes; i++) {
