@@ -95,7 +95,7 @@ public:
             // --- Auto-Detection Heuristic for Triggers ---
             // Force an immediate update to grab the real physical state 
             // the moment the device is initialized.
-            SDL_PumpEvents();
+            SDL_PumpEvents(); // Force SDL3 to process the OS event queue (e.g. evdev) first. This prevents all axes from being assigned trg axes when launching on Linux.
             SDL_UpdateJoysticks();
             
             for (int i = 0; i < numAxes; i++) {
