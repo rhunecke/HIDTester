@@ -360,6 +360,101 @@ struct MouseState {
     float currentHz = 0.0f;
 };
 
+// --- Helper function for the hardware calibration toolbar ---
+void DrawDeadzoneToolbar(JoystickHandler& joyHandler) {
+    static float deadzoneFloat = 0.0f;
+    static bool autoMinDeadzone = false;
+
+    if (autoMinDeadzone && joyHandler.isOpen()) {
+        const JoystickState& s = joyHandler.getState();
+        int maxRaw = 0;
+        for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+            if (!s.axisIsTrigger[i]) {
+                // Per-axis: silence each axis to its own resting value
+                float perAxisDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
+                joyHandler.setAxisDeadzone(i, perAxisDZ);
+                // Track the largest for the global slider display
+                int absVal = std::abs(static_cast<int>(s.sdlAxes[i]));
+                if (absVal > maxRaw) maxRaw = absVal;
+            }
+        }
+        // Keep global slider in sync with the largest per-axis value
+        deadzoneFloat = std::min(maxRaw / 32767.0f, 0.25f);
+    }
+
+    // 1. Label on the left
+    ImGui::Text("Global DZ:");
+    ImGui::SameLine();
+
+    // 2. Slider in the middle (Label hidden using "##")
+    ImGui::SetNextItemWidth(120);
+    if (autoMinDeadzone) ImGui::BeginDisabled();
+    // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
+    // are strictly clamped between our min (0.0f) and max (0.25f) limits.
+    if (ImGui::SliderFloat("##GlobalDZ", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
+        // Apply the same deadzone to all axes at once
+        joyHandler.setDeadzone(deadzoneFloat);
+    }
+    if (autoMinDeadzone) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Global deadzone applied to all axes at once.\n"
+        "Drag to set; per-axis sliders in the axis list allow finer control.\n"
+        "[Tip: CTRL+Click on the slider to type an exact value]");
+    }
+
+    // 3. Gray percentage text on the right
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f%%)", deadzoneFloat * 100.0f);
+
+    // Add spacing before the next tool
+    ImGui::SameLine(0.0f, 30.0f);
+    ImGui::Checkbox("Zero Out DZ", &autoMinDeadzone);
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Automatically sets each stick axis's deadzone to its\n"
+        "current resting value, silencing individual drift.\n"
+        "Hold all sticks at rest, then enable this.\n"
+        "Disables the Global DZ slider while active.");
+    }
+    
+    ImGui::SameLine(0.0f, 30.0f);
+    // Button to copy per-axis minimum deadzone values to the clipboard
+    if (ImGui::Button("Copy DZ")) {
+        if (joyHandler.isOpen()) {
+            const JoystickState& s = joyHandler.getState();
+            std::ostringstream oss;
+            oss << "# HIDTester Minimum Axis Deadzone Values\n"
+                << "# Hold all sticks/axes at rest before capturing.\n"
+                << "# Axis  Type               MinDZ%  MinDZ(0-1)  RawValue\n";
+            
+            constexpr size_t LINE_BUFFER_SIZE = 128;
+            char lineBuf[LINE_BUFFER_SIZE];
+            
+            for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
+                float minDZ = 0.0f;
+                if (!s.axisIsTrigger[i]) {
+                    minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
+                }
+                
+                // Formats the output as a neat table row
+                snprintf(lineBuf, LINE_BUFFER_SIZE, "  %-5d %-16s %6.2f%%   %.4f      %6d\n", 
+                         i, 
+                         s.axisIsTrigger[i] ? "Trigger Axis" : "Joystick Axis", 
+                         minDZ * 100.0f, 
+                         minDZ, 
+                         static_cast<int>(s.sdlAxes[i]));
+                oss << lineBuf;
+            }
+            SDL_SetClipboardText(oss.str().c_str());
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Copy per-axis minimum deadzone values to the clipboard.\n"
+                          "Hold sticks at rest, then click to capture current drift values.\n"
+                          "Paste into your game or simulator's axis calibration screen.");
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD)) return -1;
 
@@ -689,8 +784,7 @@ int main(int argc, char* argv[]) {
         ImGui::Begin("MainViewport", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
 
         // --- TOOLBAR (Dashboard Layout) ---
-        // Increase height to 75 and remove the MenuBar flag to allow multiple rows
-        ImGui::BeginChild("Toolbar", ImVec2(0, 75), true); 
+        ImGui::BeginChild("Toolbar", ImVec2(0, 35), true); 
         
         // --- ROW 1: Mode & Device Selection ---
         // Vertically center the text to align perfectly with the adjacent buttons
@@ -780,107 +874,6 @@ int main(int argc, char* argv[]) {
         ImGui::SameLine(ImGui::GetWindowWidth() - 110); 
         if (ImGui::Button("About (?)", ImVec2(90, 0))) show_about_window = true;
 
-        // --- LINE BREAK FOR ROW 2 ---
-        ImGui::Spacing(); 
-
-        // --- ROW 2: Hardware Calibration Tools (Joystick Only) ---
-        if (currentMode == AppMode::Joystick) {
-            // Align all items in this row vertically to match the text baseline
-            ImGui::AlignTextToFramePadding(); 
-            
-            static float deadzoneFloat = 0.0f;
-            static bool autoMinDeadzone = false;
-
-            if (autoMinDeadzone && joyHandler.isOpen()) {
-                const JoystickState& s = joyHandler.getState();
-                int maxRaw = 0;
-                for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
-                    if (!s.axisIsTrigger[i]) {
-                        // Per-axis: silence each axis to its own resting value
-                        float perAxisDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
-                        joyHandler.setAxisDeadzone(i, perAxisDZ);
-                        // Track the largest for the global slider display
-                        int absVal = std::abs(static_cast<int>(s.sdlAxes[i]));
-                        if (absVal > maxRaw) maxRaw = absVal;
-                    }
-                }
-                // Keep global slider in sync with the largest per-axis value
-                deadzoneFloat = std::min(maxRaw / 32767.0f, 0.25f);
-            }
-
-            // 1. Label on the left
-            ImGui::Text("Global DZ:");
-            ImGui::SameLine();
-
-            // 2. Slider in the middle (Label hidden using "##")
-            ImGui::SetNextItemWidth(120);
-            if (autoMinDeadzone) ImGui::BeginDisabled();
-            // Using ImGuiSliderFlags_AlwaysClamp ensures that manually typed values (via CTRL+Click)
-            // are strictly clamped between our min (0.0f) and max (0.25f) limits.
-            if (ImGui::SliderFloat("##GlobalDZ", &deadzoneFloat, 0.0f, 0.25f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
-                // Apply the same deadzone to all axes at once
-                joyHandler.setDeadzone(deadzoneFloat);
-            }
-            if (autoMinDeadzone) ImGui::EndDisabled();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Global deadzone applied to all axes at once.\n"
-                "Drag to set; per-axis sliders in the axis list allow finer control.\n"
-                "[Tip: CTRL+Click on the slider to type an exact value]");
-            }
-
-
-            // 3. Gray percentage text on the right
-            ImGui::SameLine();
-            ImGui::TextDisabled("(%.1f%%)", deadzoneFloat * 100.0f);
-
-            // Add spacing before the next tool
-            ImGui::SameLine(0.0f, 30.0f);
-            ImGui::Checkbox("Zero Out DZ", &autoMinDeadzone);
-
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Automatically sets each stick axis's deadzone to its\n"
-                "current resting value, silencing individual drift.\n"
-                "Hold all sticks at rest, then enable this.\n"
-                "Disables the Global DZ slider while active.");
-            }
-            ImGui::SameLine(0.0f, 30.0f);
-            // Button to copy per-axis minimum deadzone values to the clipboard
-            if (ImGui::Button("Copy DZ")) {
-                if (joyHandler.isOpen()) {
-                    const JoystickState& s = joyHandler.getState();
-                    std::ostringstream oss;
-                    oss << "# HIDTester Minimum Axis Deadzone Values\n"
-                        << "# Hold all sticks/axes at rest before capturing.\n"
-                        << "# Axis  Type               MinDZ%  MinDZ(0-1)  RawValue\n";
-                    
-                    constexpr size_t LINE_BUFFER_SIZE = 128;
-                    char lineBuf[LINE_BUFFER_SIZE];
-                    
-                    for (int i = 0; i < static_cast<int>(s.sdlAxes.size()); i++) {
-                        float minDZ = 0.0f;
-                        if (!s.axisIsTrigger[i]) {
-                            minDZ = std::min(std::abs(static_cast<int>(s.sdlAxes[i])) / 32767.0f, 0.25f);
-                        }
-                        
-                        // Formats the output as a neat table row
-                        snprintf(lineBuf, LINE_BUFFER_SIZE, "  %-5d %-16s %6.2f%%   %.4f      %6d\n", 
-                                 i, 
-                                 s.axisIsTrigger[i] ? "Trigger Axis" : "Joystick Axis", 
-                                 minDZ * 100.0f, 
-                                 minDZ, 
-                                 static_cast<int>(s.sdlAxes[i]));
-                        oss << lineBuf;
-                    }
-                    SDL_SetClipboardText(oss.str().c_str());
-                }
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Copy per-axis minimum deadzone values to the clipboard.\n"
-                                  "Hold sticks at rest, then click to capture current drift values.\n"
-                                  "Paste into your game or simulator's axis calibration screen.");
-            }
-        }
-
         ImGui::EndChild();
 
         // --- ABOUT MODAL WINDOW ---
@@ -932,6 +925,9 @@ int main(int argc, char* argv[]) {
 
             ImGui::EndPopup();
         }
+        
+        // Spacing between Main Toolbar and Tabs. Alternative: ImGui::Dummy(ImVec2(0.0f, 10.0f));
+        ImGui::Spacing(); // ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
         // --- CONTENT ---
         if (ImGui::BeginTabBar("MainTabs")) {
@@ -939,12 +935,19 @@ int main(int argc, char* argv[]) {
             // JOYSTICK TABS
             if (currentMode == AppMode::Joystick) {
                 if (ImGui::BeginTabItem("Live Test")) {
-
-                    ImGui::Spacing();
-                    ImGui::Checkbox("Show Visual Stick Monitors", &showVisualizer);
-                    ImGui::Separator();
-                    ImGui::Spacing();
                     if (deviceOpened) {
+
+                        ImGui::Spacing();
+                        // --- TAB TOOLBAR ---
+                        ImGui::AlignTextToFramePadding(); 
+                        DrawDeadzoneToolbar(joyHandler);
+
+                        ImGui::SameLine(0.0f, 30.0f);
+                        ImGui::Checkbox("Show Stick Monitors", &showVisualizer);
+
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                    
                         JoystickState displayState = joyHandler.getState();
 
                         if (debug_StressTestUI) {
@@ -1041,15 +1044,18 @@ int main(int argc, char* argv[]) {
                 if (ImGui::BeginTabItem("Axis Curves")) {
                     if (deviceOpened) {
 
-                        // REMOVED: joyHandler.update();
-                        // REMOVED: axisHistory push_back / pop_front logic.
-                        // Data tracking is now running continuously in the background.
-
                         const auto& state = joyHandler.getState();
 
+                        ImGui::Spacing();
+
+                        // --- TAB TOOLBAR ---
+                        ImGui::AlignTextToFramePadding(); 
+                        DrawDeadzoneToolbar(joyHandler);
+
                         // --- UI Controls for Graph Tweaking ---
-                        ImGui::SetNextItemWidth(200);
-                        ImGui::SliderInt("Speed (Time Window)", &maxSamples, 50, 1500, "%d samples");
+                        ImGui::SameLine(0.0f, 30.0f);
+                        ImGui::SetNextItemWidth(120);
+                        ImGui::SliderInt("Speed", &maxSamples, 50, 1500, "%d samples");
 
                         // Tooltip for the Speed/Samples slider
                         if (ImGui::IsItemHovered()) {
@@ -1059,8 +1065,8 @@ int main(int argc, char* argv[]) {
 
                         ImGui::SameLine(0, 30.0f);
 
-                        ImGui::SetNextItemWidth(200);
-                        ImGui::SliderFloat("Zoom (Y-Axis)", &zoomLevel, 0.05f, 1.0f, "%.2f");
+                        ImGui::SetNextItemWidth(120);
+                        ImGui::SliderFloat("Zoom", &zoomLevel, 0.05f, 1.0f, "%.2f");
 
                         // Tooltip for the Zoom slider
                         if (ImGui::IsItemHovered()) {
@@ -1068,7 +1074,9 @@ int main(int argc, char* argv[]) {
                             "Zoom in (lower values) to easily inspect minor sensor noise, jitter, or stick drift.");
                         }
 
+                        ImGui::Spacing();
                         ImGui::Separator();
+                        
                         ImGui::BeginChild("PlotArea");
 
                         for (int i = 0; i < (int)state.axes.size(); i++) {
@@ -1107,13 +1115,17 @@ int main(int argc, char* argv[]) {
                 }
                 if (ImGui::BeginTabItem("Event Log")) {
                     if (deviceOpened) {
+                        ImGui::Spacing();
+
                         if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
                             eventLog.clear();
                         }
                         ImGui::SameLine();
                         ImGui::TextDisabled("Press and release a button to record its duration.");
 
+                        ImGui::Spacing();
                         ImGui::Separator();
+
                         ImGui::BeginChild("EventLogRegion", ImVec2(0, 0), true);
 
                         // Iterate backwards to show the newest events at the top
@@ -1189,7 +1201,7 @@ int main(int argc, char* argv[]) {
 
                     ImGui::EndChild();
 
-                    ImGui::Separator();
+                    ImGui::Spacing();
 
                     // --- Clear Log Button for Keyboard Events ---
                     if (ImGui::Button("Clear Log", ImVec2(120, 0))) {
@@ -1197,6 +1209,8 @@ int main(int argc, char* argv[]) {
                     }
                     ImGui::SameLine();
                     ImGui::TextDisabled("Press and release keys to record their duration.");
+
+                    ImGui::Spacing();
 
                     // --- Event Stream Render Region ---
                     ImGui::BeginChild("KBEventLog", ImVec2(0, 0), true);
@@ -1253,7 +1267,8 @@ int main(int argc, char* argv[]) {
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.0f Hz", mouseState.currentHz);
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Peak: %.0f Hz)", maxHz);
-
+                    
+                    ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
 
