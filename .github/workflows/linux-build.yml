@@ -65,6 +65,9 @@ jobs:
         mkdir -p "$DIR_NAME"
         
         cp build/HIDTester "$DIR_NAME/"
+
+        cp -L "$PWD/sdl3-install/lib/libSDL3.so.0" "$DIR_NAME/" || true
+        
         cp README.md "$DIR_NAME/" || true
         cp MIGRATION.md "$DIR_NAME/" || true
         cp LICENSE "$DIR_NAME/" || true
