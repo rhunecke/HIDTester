@@ -82,6 +82,10 @@ elseif(APPLE)
 else()
     # Standard Linux linking
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 GL)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
 # --- OPTIONAL: SDL3 smoke/unit tests (require SDL3) ---
