@@ -67,6 +67,7 @@ jobs:
         cp build/HIDTester "$DIR_NAME/"
 
         cp -L "$PWD/sdl3-install/lib/libSDL3.so.0" "$DIR_NAME/" || true
+        strip --strip-unneeded "$DIR_NAME/libSDL3.so.0"
         
         cp README.md "$DIR_NAME/" || true
         cp MIGRATION.md "$DIR_NAME/" || true
