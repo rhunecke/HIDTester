@@ -54,11 +54,11 @@ The dead-zone region is highlighted in **off-green** inside the progress bar so 
 ```
 # HIDTester Minimum Axis Deadzone Values
 # Hold all sticks/axes at rest before capturing.
-# Axis  Type      MinDZ%    MinDZ(0-1)  RawValue
-  0     Stick      12.50%   0.1250        -4096
-  1     Stick       2.38%   0.0238          781
-  2     Stick      13.49%   0.1349         4422
-  3     Trigger     0.00%   0.0000       -32768
+# Axis  Type          MinDZ%   MinDZ(0-1)  RawValue
+  0     Joystick      12.50%   0.1250        -4096
+  1     Joystick       2.38%   0.0238          781
+  2     Joystick      13.49%   0.1349         4422
+  3     Trigger        0.00%   0.0000       -32768
 ```
 
 Paste these values into your simulator's or game's **axis deadzone** settings.  Most titles accept a percentage (e.g. `13%`) or a normalized float (e.g. `0.1349`).
