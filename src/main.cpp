@@ -760,9 +760,14 @@ int main(int argc, char* argv[]) {
 
                 #ifndef _WIN32
                 // --- Polling Rate (Hz) via rolling window (non-Windows) ---
-                // On Windows the raw-input message hook provides accurate Hz;
-                // on Linux/macOS we count SDL motion events instead (no OS coalescing).
-                Uint64 now = SDL_GetTicksNS();
+                // Use the actual OS hardware timestamp of the event. This prevents 
+                // inaccurate readings caused by event batching from the Linux 
+                // desktop compositor (like Wayland or X11).
+                Uint64 now = event.motion.timestamp;
+                
+                // Fallback in case the system does not provide timestamps (very rare)
+                if (now == 0) now = SDL_GetTicksNS();
+
                 mouseState.motionTimestampsNs.push_back(now);
 
                 // Trim events older than the 500 ms measurement window
