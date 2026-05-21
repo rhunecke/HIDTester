@@ -678,6 +678,12 @@ int main(int argc, char* argv[]) {
 
     MouseState mouseState = {};
 
+    // --- State variables for Raw Polling Test ---
+    bool isRawPollingActive = false;
+    ImVec2 virtualMousePos = ImVec2(0, 0);
+    ImVec2 currentCanvasPos = ImVec2(0, 0);
+    ImVec2 currentCanvasSize = ImVec2(0, 0);
+
     bool done = false;
 
     AppMode currentMode = AppMode::Joystick;
@@ -697,6 +703,19 @@ int main(int argc, char* argv[]) {
 
             // Keyboard Event Tracking
             if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+                
+                // Keyboard Event Tracking (Extended with ESC to exit the raw polling test)
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && isRawPollingActive) {
+                    isRawPollingActive = false;
+                    
+                    #ifndef _WIN32
+                    SDL_SetWindowRelativeMouseMode(window, false);
+                    #else
+                    SDL_SetWindowMouseGrab(window, false);
+                    SDL_ShowCursor();
+                    #endif
+                }
+
                 // Ignore key repeats (holding down a key) for clean analysis
                 if (!event.key.repeat) {
                     bool isDown = (event.type == SDL_EVENT_KEY_DOWN);
@@ -748,30 +767,59 @@ int main(int argc, char* argv[]) {
 
                 // Trim events older than the 500 ms measurement window
                 const Uint64 WINDOW_NS = 500000000ULL;
-                while (!mouseState.motionTimestampsNs.empty() &&
-                       (now - mouseState.motionTimestampsNs.front()) > WINDOW_NS) {
+                while (!mouseState.motionTimestampsNs.empty() && (now - mouseState.motionTimestampsNs.front()) > WINDOW_NS) {
                     mouseState.motionTimestampsNs.pop_front();
                 }
 
-                // Compute average Hz over the window
                 if (mouseState.motionTimestampsNs.size() >= 2) {
-                    Uint64 span = mouseState.motionTimestampsNs.back()
-                                - mouseState.motionTimestampsNs.front();
+                    Uint64 span = mouseState.motionTimestampsNs.back() - mouseState.motionTimestampsNs.front();
                     if (span > 0) {
-                        mouseState.currentHz = (float)(mouseState.motionTimestampsNs.size() - 1)
-                                             * 1000000000.0f / (float)span;
+                        mouseState.currentHz = (float)(mouseState.motionTimestampsNs.size() - 1) * 1000000000.0f / (float)span;
                     }
                 } else {
                     mouseState.currentHz = 0.0f;
                 }
                 #endif
 
-                // Store trail points for the visualizer
-                mouseState.movementTrail.push_back(ImVec2((float)mouseState.x, (float)mouseState.y));
+                // --- VIRTUAL CURSOR & TRAIL LOGIC ---
+                // Convert absolute mouse position to local canvas coordinates
+                float localX = mouseState.x - currentCanvasPos.x;
+                float localY = mouseState.y - currentCanvasPos.y;
+
+                if (isRawPollingActive) {
+                    // Use raw hardware deltas to move the virtual cursor
+                    virtualMousePos.x += event.motion.xrel;
+                    virtualMousePos.y += event.motion.yrel;
+
+                    // Clamp the virtual cursor to the canvas boundaries
+                    if (currentCanvasSize.x > 0) {
+                        virtualMousePos.x = std::clamp(virtualMousePos.x, 0.0f, currentCanvasSize.x);
+                        virtualMousePos.y = std::clamp(virtualMousePos.y, 0.0f, currentCanvasSize.y);
+                    }
+                    localX = virtualMousePos.x;
+                    localY = virtualMousePos.y;
+                }
+
+                // Store the local (or virtual) coordinates for drawing
+                mouseState.movementTrail.push_back(ImVec2(localX, localY));
                 if (mouseState.movementTrail.size() > 200) mouseState.movementTrail.pop_front();
             }
+
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                 bool isDown = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                
+                // Exit the test immediately if any mouse button is pressed
+                if (isDown && isRawPollingActive) {
+                    isRawPollingActive = false;
+                    
+                    #ifndef _WIN32
+                    SDL_SetWindowRelativeMouseMode(window, false);
+                    #else
+                    SDL_SetWindowMouseGrab(window, false);
+                    SDL_ShowCursor();
+                    #endif
+                }
+
                 if (event.button.button == SDL_BUTTON_LEFT)   mouseState.buttons[0] = isDown;
                 if (event.button.button == SDL_BUTTON_MIDDLE) mouseState.buttons[1] = isDown;
                 if (event.button.button == SDL_BUTTON_RIGHT)  mouseState.buttons[2] = isDown;
@@ -1375,11 +1423,36 @@ int main(int argc, char* argv[]) {
                     // TOP ROW: Polling Rate & Core Stats
                     ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Sensor Performance");
 
-                    if (ImGui::Button("Reset Peak Stats")) {
-                        maxHz = 0.0f;
-                        accumulatedScroll = 0;
+                    // --- RAW POLLING BUTTON ---
+                    if (isRawPollingActive) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::Button("Stop Raw Polling Test (ESC)")) {
+                            isRawPollingActive = false;
+                            
+                            #ifndef _WIN32
+                            SDL_SetWindowRelativeMouseMode(window, false);
+                            #else
+                            SDL_SetWindowMouseGrab(window, false);
+                            SDL_ShowCursor();
+                            #endif
+                        }
+                        ImGui::PopStyleColor();
+                    } else {
+                        if (ImGui::Button("Start Raw Polling Test")) {
+                            isRawPollingActive = true;
+                            mouseState.movementTrail.clear(); // Clear the previous trail
+                            virtualMousePos = ImVec2(currentCanvasSize.x * 0.5f, currentCanvasSize.y * 0.5f);
+                            
+                            #ifndef _WIN32
+                            SDL_SetWindowRelativeMouseMode(window, true);
+                            #else
+                            SDL_SetWindowMouseGrab(window, true);
+                            SDL_HideCursor();
+                            #endif
+                        }
                     }
-                    ImGui::SameLine();
+
+                    ImGui::SameLine(0.0f, 40.0f);
 
                     // Display current and max polling rate
                     ImGui::Text("Polling Rate: ");
@@ -1387,6 +1460,12 @@ int main(int argc, char* argv[]) {
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.0f Hz", mouseState.currentHz);
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Peak: %.0f Hz)", maxHz);
+                    
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Peak Stats")) {
+                        maxHz = 0.0f;
+                        accumulatedScroll = 0;
+                    }
                     
                     ImGui::Spacing();
                     ImGui::Separator();
@@ -1449,36 +1528,65 @@ int main(int argc, char* argv[]) {
                     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
                     if (canvasSize.y < 200.0f) canvasSize.y = 200.0f; // Ensure minimum height
 
+                    // Update global values for the event loop
+                    currentCanvasPos = canvasPos;
+                    currentCanvasSize = canvasSize;
+
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
                     // Draw Canvas Background and Border
                     drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
                     drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(100, 100, 100, 255));
 
-                    // Draw the movement trail
-                    // SDL absolute mouse coordinates are relative to the client window.
-                    // We map them to the screen-space of ImGui for drawing.
-                    if (mouseState.movementTrail.size() >= 2) {
-                        for (size_t i = 1; i < mouseState.movementTrail.size(); i++) {
+                    // --- BACKGROUND TEXT DURING TEST ---
+                    if (isRawPollingActive) {
+                        const char* t1 = "RAW POLLING TEST ACTIVE";
+                        const char* t2 = "Move your mouse to test maximum uncoalesced USB polling rate.";
+                        const char* t3 = "Press ESC or click any mouse button to exit.";
 
-                            // Map local window coordinates to global screen coordinates
-                            ImVec2 p1 = ImVec2(mouseState.movementTrail[i-1].x + canvasPos.x, mouseState.movementTrail[i-1].y + canvasPos.y);
-                            ImVec2 p2 = ImVec2(mouseState.movementTrail[i].x + canvasPos.x, mouseState.movementTrail[i].y + canvasPos.y);
+                        ImVec2 s1 = ImGui::CalcTextSize(t1);
+                        ImVec2 s2 = ImGui::CalcTextSize(t2);
+                        ImVec2 s3 = ImGui::CalcTextSize(t3);
 
-                            // Clamp drawing points so they don't bleed out of the canvas box
-                            bool p1InBounds = (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x && p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y);
-                            bool p2InBounds = (p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x && p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y);
+                        float cy = canvasPos.y + canvasSize.y * 0.5f;
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s1.x) * 0.5f, cy - 30), IM_COL32(0, 255, 128, 150), t1);
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s2.x) * 0.5f, cy), IM_COL32(150, 150, 150, 150), t2);
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s3.x) * 0.5f, cy + 25), IM_COL32(150, 150, 150, 150), t3);
 
-                            if (p1InBounds && p2InBounds) {
-                                // Draw a line segment
-                                drawList->AddLine(p1, p2, IM_COL32(0, 255, 128, 200), 2.0f);
 
-                                // Draw a dot at the polling point to visualize report frequency
-                                drawList->AddCircleFilled(p2, 2.0f, IM_COL32(255, 255, 255, 255));
+                        // Draw the movement trail only when active
+                        // SDL absolute mouse coordinates are relative to the client window.
+                        // We map them to the screen-space of ImGui for drawing.
+                        if (mouseState.movementTrail.size() >= 2) {
+                            for (size_t i = 1; i < mouseState.movementTrail.size(); i++) {
+
+                                // Map local window coordinates to global screen coordinates
+                                ImVec2 p1 = ImVec2(mouseState.movementTrail[i-1].x + canvasPos.x, mouseState.movementTrail[i-1].y + canvasPos.y);
+                                ImVec2 p2 = ImVec2(mouseState.movementTrail[i].x + canvasPos.x, mouseState.movementTrail[i].y + canvasPos.y);
+
+                                // Clamp drawing points so they don't bleed out of the canvas box
+                                bool p1InBounds = (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x && p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y);
+                                bool p2InBounds = (p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x && p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y);
+
+                                if (p1InBounds && p2InBounds) {
+                                    // Draw a line segment
+                                    drawList->AddLine(p1, p2, IM_COL32(0, 255, 128, 200), 2.0f);
+
+                                    // Draw a dot at the polling point to visualize report frequency
+                                    drawList->AddCircleFilled(p2, 2.0f, IM_COL32(255, 255, 255, 255));
+                                }
                             }
                         }
+                    } else {
+                        // --- IDLE TEXT WHEN NOT TESTING ---
+                        const char* idleText = "Press 'Start Raw Polling Test' to visualize sensor tracking.";
+                        
+                        ImVec2 idleSize = ImGui::CalcTextSize(idleText);
+                        float cy = canvasPos.y + canvasSize.y * 0.5f;
+                        
+                        // Zeichnet den Text exakt zentriert in die Mitte des Canvas
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - idleSize.x) * 0.5f, cy), IM_COL32(150, 150, 150, 200), idleText);
                     }
-
                     // Invisible button overlay over the canvas to capture mouse input context if needed
                     ImGui::InvisibleButton("CanvasOverlay", canvasSize);
 
