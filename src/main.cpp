@@ -164,6 +164,79 @@ void OpenWebpage(const char* url) {
     #endif
 }
 
+// --- Windows Raw Input Polling Rate Counter ---
+// On Windows, WM_MOUSEMOVE messages are coalesced by the OS, which means
+// SDL_EVENT_MOUSE_MOTION events undercount the true hardware interrupt rate.
+// WM_INPUT (Raw Input) messages are never coalesced, so we register for them
+// and count arrivals inside SDL's own message pump via SDL_SetWindowsMessageHook.
+// On Linux (evdev) and macOS (CGEvents) SDL events are used directly.
+#ifdef _WIN32
+struct RawMouseCounter {
+    std::deque<Uint64> timestampsNs;
+    float currentHz = 0.0f;
+
+    void recordEvent() {
+        Uint64 now = SDL_GetTicksNS();
+        timestampsNs.push_back(now);
+
+        const Uint64 WINDOW_NS = 500000000ULL; // 500 ms
+        while (!timestampsNs.empty() && (now - timestampsNs.front()) > WINDOW_NS) {
+            timestampsNs.pop_front();
+        }
+
+        if (timestampsNs.size() >= 2) {
+            Uint64 span = timestampsNs.back() - timestampsNs.front();
+            if (span > 0) {
+                currentHz = (float)(timestampsNs.size() - 1)
+                          * 1000000000.0f / (float)span;
+            }
+        } else {
+            currentHz = 0.0f;
+        }
+    }
+};
+
+static RawMouseCounter g_rawMouseCounter;
+
+static bool SDLCALL RawInputMessageHook(void* userdata, MSG* msg) {
+    if (msg->message == WM_INPUT) {
+        UINT size = sizeof(RAWINPUT);
+        RAWINPUT raw = {};
+        if (GetRawInputData((HRAWINPUT)msg->lParam, RID_INPUT,
+                            &raw, &size, sizeof(RAWINPUTHEADER)) != (UINT)-1) {
+            if (raw.header.dwType == RIM_TYPEMOUSE) {
+                g_rawMouseCounter.recordEvent();
+            }
+        }
+    }
+    return true; // Let SDL continue processing the message
+}
+#endif
+
+// --- macOS Mouse Coalescing Control ---
+// By default, macOS's window server coalesces mouse moved and dragged events
+// to the display refresh rate to save power. Disabling this property on the
+// NSEvent class tells AppKit to deliver every single raw hardware event to
+// our application's event queue.
+#ifdef __APPLE__
+#include <objc/objc.h>
+#include <objc/message.h>
+
+void DisableMacMouseCoalescing() {
+    Class nsEventClass = objc_getClass("NSEvent");
+    if (nsEventClass) {
+        SEL setMouseCoalescingEnabledSel = sel_registerName("setMouseCoalescingEnabled:");
+        if (setMouseCoalescingEnabledSel) {
+            // Cast objc_msgSend to the correct function pointer signature
+            // to prevent compiler optimization/calling convention issues.
+            typedef void (*SendFunc)(Class, SEL, BOOL);
+            SendFunc send = (SendFunc)objc_msgSend;
+            send(nsEventClass, setMouseCoalescingEnabledSel, (BOOL)0); // 0 corresponds to NO
+        }
+    }
+}
+#endif
+
 /**
  * Visualizes Analog Axes with ProgressBars.
  * Displays both the smoothed logical value and the raw 16-bit hardware data.
@@ -355,8 +428,8 @@ struct MouseState {
     bool buttons[5]; // Left, Middle, Right, X1, X2
     std::deque<ImVec2> movementTrail; // For drawing the 2D Scatter plot
 
-    // For Polling Rate Calculation
-    Uint64 lastEventTime = 0;
+    // For Polling Rate Calculation — rolling window
+    std::deque<Uint64> motionTimestampsNs; // One entry per motion event (SDL_GetTicksNS)
     float currentHz = 0.0f;
 };
 
@@ -524,6 +597,25 @@ int main(int argc, char* argv[]) {
     }
     #endif
 
+    // --- RAW INPUT REGISTRATION FOR POLLING RATE (Windows only) ---
+    // Register for raw mouse input so the polling-rate counter sees every
+    // hardware interrupt without WM_MOUSEMOVE coalescing.
+    #ifdef _WIN32
+    if (hwnd) {
+        RAWINPUTDEVICE rid = {};
+        rid.usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
+        rid.usUsage     = 0x02; // HID_USAGE_GENERIC_MOUSE
+        rid.dwFlags     = RIDEV_INPUTSINK;
+        rid.hwndTarget  = hwnd;
+        RegisterRawInputDevices(&rid, 1, sizeof(rid));
+        SDL_SetWindowsMessageHook(RawInputMessageHook, nullptr);
+    }
+    #endif
+
+    #ifdef __APPLE__
+    DisableMacMouseCoalescing();
+    #endif
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -542,10 +634,9 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     // --- DISABLE VSYNC FOR HARDWARE POLLING ---
-    // explicitly turn off VSync (Swap Interval 0).
-    // This allows the main while() loop to run as fast as the CPU allows (uncapped FPS).
-    // This is STRICTLY REQUIRED so SDL_PollEvent can catch 1000Hz+ mouse interrupts
-    // instantly without the OS coalescing/batching them during VSync sleep periods.
+    // VSync is off so SDL_PollEvent can drain the OS event queue promptly.
+    // Mouse polling-rate accuracy comes from SDL3 event timestamps (nanoseconds),
+    // NOT from frame rate, so the loop can safely sleep via SDL_Delay(1) to save CPU.
     SDL_GL_SetSwapInterval(0);
 
     JoystickHandler joyHandler;
@@ -587,13 +678,21 @@ int main(int argc, char* argv[]) {
 
     MouseState mouseState = {};
 
+    // --- State variables for Raw Polling Test ---
+    bool isRawPollingActive = false;
+    ImVec2 virtualMousePos = ImVec2(0, 0);
+    ImVec2 currentCanvasPos = ImVec2(0, 0);
+    ImVec2 currentCanvasSize = ImVec2(0, 0);
+
     bool done = false;
 
     AppMode currentMode = AppMode::Joystick;
 
     while (!done) {
         SDL_Event event;
+        bool hadEvents = false;
         while (SDL_PollEvent(&event)) {
+            hadEvents = true;
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT) done = true;
 
@@ -604,6 +703,19 @@ int main(int argc, char* argv[]) {
 
             // Keyboard Event Tracking
             if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+                
+                // Keyboard Event Tracking (Extended with ESC to exit the raw polling test)
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && isRawPollingActive) {
+                    isRawPollingActive = false;
+                    
+                    #ifndef _WIN32
+                    SDL_SetWindowRelativeMouseMode(window, false);
+                    #else
+                    SDL_SetWindowMouseGrab(window, false);
+                    SDL_ShowCursor();
+                    #endif
+                }
+
                 // Ignore key repeats (holding down a key) for clean analysis
                 if (!event.key.repeat) {
                     bool isDown = (event.type == SDL_EVENT_KEY_DOWN);
@@ -646,20 +758,73 @@ int main(int argc, char* argv[]) {
                 mouseState.deltaX = event.motion.xrel;
                 mouseState.deltaY = event.motion.yrel;
 
-                // Calculate Polling Rate (Hz)
-                Uint64 currentTime = SDL_GetTicks();
-                Uint64 timeDiff = currentTime - mouseState.lastEventTime;
-                if (timeDiff > 0) {
-                    mouseState.currentHz = 1000.0f / (float)timeDiff;
-                }
-                mouseState.lastEventTime = currentTime;
+                #ifndef _WIN32
+                // --- Polling Rate (Hz) via rolling window (non-Windows) ---
+                // Use the actual OS hardware timestamp of the event. This prevents 
+                // inaccurate readings caused by event batching from the Linux 
+                // desktop compositor (like Wayland or X11).
+                Uint64 now = event.motion.timestamp;
+                
+                // Fallback in case the system does not provide timestamps (very rare)
+                if (now == 0) now = SDL_GetTicksNS();
 
-                // Store trail points for the visualizer
-                mouseState.movementTrail.push_back(ImVec2((float)mouseState.x, (float)mouseState.y));
+                mouseState.motionTimestampsNs.push_back(now);
+
+                // Trim events older than the 500 ms measurement window
+                const Uint64 WINDOW_NS = 500000000ULL;
+                while (!mouseState.motionTimestampsNs.empty() && (now - mouseState.motionTimestampsNs.front()) > WINDOW_NS) {
+                    mouseState.motionTimestampsNs.pop_front();
+                }
+
+                if (mouseState.motionTimestampsNs.size() >= 2) {
+                    Uint64 span = mouseState.motionTimestampsNs.back() - mouseState.motionTimestampsNs.front();
+                    if (span > 0) {
+                        mouseState.currentHz = (float)(mouseState.motionTimestampsNs.size() - 1) * 1000000000.0f / (float)span;
+                    }
+                } else {
+                    mouseState.currentHz = 0.0f;
+                }
+                #endif
+
+                // --- VIRTUAL CURSOR & TRAIL LOGIC ---
+                // Convert absolute mouse position to local canvas coordinates
+                float localX = mouseState.x - currentCanvasPos.x;
+                float localY = mouseState.y - currentCanvasPos.y;
+
+                if (isRawPollingActive) {
+                    // Use raw hardware deltas to move the virtual cursor
+                    virtualMousePos.x += event.motion.xrel;
+                    virtualMousePos.y += event.motion.yrel;
+
+                    // Clamp the virtual cursor to the canvas boundaries
+                    if (currentCanvasSize.x > 0) {
+                        virtualMousePos.x = std::clamp(virtualMousePos.x, 0.0f, currentCanvasSize.x);
+                        virtualMousePos.y = std::clamp(virtualMousePos.y, 0.0f, currentCanvasSize.y);
+                    }
+                    localX = virtualMousePos.x;
+                    localY = virtualMousePos.y;
+                }
+
+                // Store the local (or virtual) coordinates for drawing
+                mouseState.movementTrail.push_back(ImVec2(localX, localY));
                 if (mouseState.movementTrail.size() > 200) mouseState.movementTrail.pop_front();
             }
+
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                 bool isDown = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                
+                // Exit the test immediately if any mouse button is pressed
+                if (isDown && isRawPollingActive) {
+                    isRawPollingActive = false;
+                    
+                    #ifndef _WIN32
+                    SDL_SetWindowRelativeMouseMode(window, false);
+                    #else
+                    SDL_SetWindowMouseGrab(window, false);
+                    SDL_ShowCursor();
+                    #endif
+                }
+
                 if (event.button.button == SDL_BUTTON_LEFT)   mouseState.buttons[0] = isDown;
                 if (event.button.button == SDL_BUTTON_MIDDLE) mouseState.buttons[1] = isDown;
                 if (event.button.button == SDL_BUTTON_RIGHT)  mouseState.buttons[2] = isDown;
@@ -672,6 +837,14 @@ int main(int argc, char* argv[]) {
         }
 
         // Refresh the cached joystick list whenever a hotplug event was received.
+
+        // On Windows, copy the raw-input polling rate into the mouse state.
+        // The raw-input hook runs inside SDL_PumpEvents (called by SDL_PollEvent
+        // above), so g_rawMouseCounter is already up to date at this point.
+        #ifdef _WIN32
+        mouseState.currentHz = g_rawMouseCounter.currentHz;
+        #endif
+
         if (joystickListDirty) {
             int nJoysticksFresh = 0;
             SDL_JoystickID* freshIds = SDL_GetJoysticks(&nJoysticksFresh);
@@ -1255,11 +1428,36 @@ int main(int argc, char* argv[]) {
                     // TOP ROW: Polling Rate & Core Stats
                     ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "Sensor Performance");
 
-                    if (ImGui::Button("Reset Peak Stats")) {
-                        maxHz = 0.0f;
-                        accumulatedScroll = 0;
+                    // --- RAW POLLING BUTTON ---
+                    if (isRawPollingActive) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::Button("Stop Raw Polling Test (ESC)")) {
+                            isRawPollingActive = false;
+                            
+                            #ifndef _WIN32
+                            SDL_SetWindowRelativeMouseMode(window, false);
+                            #else
+                            SDL_SetWindowMouseGrab(window, false);
+                            SDL_ShowCursor();
+                            #endif
+                        }
+                        ImGui::PopStyleColor();
+                    } else {
+                        if (ImGui::Button("Start Raw Polling Test")) {
+                            isRawPollingActive = true;
+                            mouseState.movementTrail.clear(); // Clear the previous trail
+                            virtualMousePos = ImVec2(currentCanvasSize.x * 0.5f, currentCanvasSize.y * 0.5f);
+                            
+                            #ifndef _WIN32
+                            SDL_SetWindowRelativeMouseMode(window, true);
+                            #else
+                            SDL_SetWindowMouseGrab(window, true);
+                            SDL_HideCursor();
+                            #endif
+                        }
                     }
-                    ImGui::SameLine();
+
+                    ImGui::SameLine(0.0f, 40.0f);
 
                     // Display current and max polling rate
                     ImGui::Text("Polling Rate: ");
@@ -1267,6 +1465,12 @@ int main(int argc, char* argv[]) {
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%.0f Hz", mouseState.currentHz);
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Peak: %.0f Hz)", maxHz);
+                    
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Peak Stats")) {
+                        maxHz = 0.0f;
+                        accumulatedScroll = 0;
+                    }
                     
                     ImGui::Spacing();
                     ImGui::Separator();
@@ -1329,36 +1533,64 @@ int main(int argc, char* argv[]) {
                     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
                     if (canvasSize.y < 200.0f) canvasSize.y = 200.0f; // Ensure minimum height
 
+                    // Update global values for the event loop
+                    currentCanvasPos = canvasPos;
+                    currentCanvasSize = canvasSize;
+
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
                     // Draw Canvas Background and Border
                     drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
                     drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(100, 100, 100, 255));
 
-                    // Draw the movement trail
-                    // SDL absolute mouse coordinates are relative to the client window.
-                    // We map them to the screen-space of ImGui for drawing.
-                    if (mouseState.movementTrail.size() >= 2) {
-                        for (size_t i = 1; i < mouseState.movementTrail.size(); i++) {
+                    // --- BACKGROUND TEXT DURING TEST ---
+                    if (isRawPollingActive) {
+                        const char* t1 = "RAW POLLING TEST ACTIVE";
+                        const char* t2 = "Move your mouse to test maximum uncoalesced USB polling rate.";
+                        const char* t3 = "Press ESC or click any mouse button to exit.";
 
-                            // Map local window coordinates to global screen coordinates
-                            ImVec2 p1 = ImVec2(mouseState.movementTrail[i-1].x + canvasPos.x, mouseState.movementTrail[i-1].y + canvasPos.y);
-                            ImVec2 p2 = ImVec2(mouseState.movementTrail[i].x + canvasPos.x, mouseState.movementTrail[i].y + canvasPos.y);
+                        ImVec2 s1 = ImGui::CalcTextSize(t1);
+                        ImVec2 s2 = ImGui::CalcTextSize(t2);
+                        ImVec2 s3 = ImGui::CalcTextSize(t3);
 
-                            // Clamp drawing points so they don't bleed out of the canvas box
-                            bool p1InBounds = (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x && p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y);
-                            bool p2InBounds = (p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x && p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y);
+                        float cy = canvasPos.y + canvasSize.y * 0.5f;
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s1.x) * 0.5f, cy - 30), IM_COL32(0, 255, 128, 150), t1);
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s2.x) * 0.5f, cy), IM_COL32(150, 150, 150, 150), t2);
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - s3.x) * 0.5f, cy + 25), IM_COL32(150, 150, 150, 150), t3);
 
-                            if (p1InBounds && p2InBounds) {
-                                // Draw a line segment
-                                drawList->AddLine(p1, p2, IM_COL32(0, 255, 128, 200), 2.0f);
 
-                                // Draw a dot at the polling point to visualize report frequency
-                                drawList->AddCircleFilled(p2, 2.0f, IM_COL32(255, 255, 255, 255));
+                        // Draw the movement trail only when active
+                        // SDL absolute mouse coordinates are relative to the client window.
+                        // We map them to the screen-space of ImGui for drawing.
+                        if (mouseState.movementTrail.size() >= 2) {
+                            for (size_t i = 1; i < mouseState.movementTrail.size(); i++) {
+
+                                // Map local window coordinates to global screen coordinates
+                                ImVec2 p1 = ImVec2(mouseState.movementTrail[i-1].x + canvasPos.x, mouseState.movementTrail[i-1].y + canvasPos.y);
+                                ImVec2 p2 = ImVec2(mouseState.movementTrail[i].x + canvasPos.x, mouseState.movementTrail[i].y + canvasPos.y);
+
+                                // Clamp drawing points so they don't bleed out of the canvas box
+                                bool p1InBounds = (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x && p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y);
+                                bool p2InBounds = (p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x && p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y);
+
+                                if (p1InBounds && p2InBounds) {
+                                    // Draw a line segment
+                                    drawList->AddLine(p1, p2, IM_COL32(0, 255, 128, 200), 2.0f);
+
+                                    // Draw a dot at the polling point to visualize report frequency
+                                    drawList->AddCircleFilled(p2, 2.0f, IM_COL32(255, 255, 255, 255));
+                                }
                             }
                         }
+                    } else {
+                        // --- IDLE TEXT WHEN NOT TESTING ---
+                        const char* idleText = "Press 'Start Raw Polling Test' to visualize sensor tracking.";
+                        
+                        ImVec2 idleSize = ImGui::CalcTextSize(idleText);
+                        float cy = canvasPos.y + canvasSize.y * 0.5f;
+                        
+                        drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - idleSize.x) * 0.5f, cy), IM_COL32(150, 150, 150, 200), idleText);
                     }
-
                     // Invisible button overlay over the canvas to capture mouse input context if needed
                     ImGui::InvisibleButton("CanvasOverlay", canvasSize);
 
@@ -1379,6 +1611,15 @@ int main(int argc, char* argv[]) {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
+
+        // Adaptive sleep: only yield the CPU when no events were received.
+        // During active mouse movement the loop stays uncapped so the OS
+        // cannot coalesce WM_MOUSEMOVE messages (Windows), preserving
+        // accurate 1000 Hz+ polling-rate measurements.  When idle the
+        // loop sleeps, dropping CPU usage to near zero.
+        if (!hadEvents) {
+            SDL_Delay(1);
+        }
     }
 
     ImGui_ImplOpenGL3_Shutdown();
