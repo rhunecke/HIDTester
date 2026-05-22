@@ -1589,7 +1589,6 @@ int main(int argc, char* argv[]) {
                         ImVec2 idleSize = ImGui::CalcTextSize(idleText);
                         float cy = canvasPos.y + canvasSize.y * 0.5f;
                         
-                        // Zeichnet den Text exakt zentriert in die Mitte des Canvas
                         drawList->AddText(ImVec2(canvasPos.x + (canvasSize.x - idleSize.x) * 0.5f, cy), IM_COL32(150, 150, 150, 200), idleText);
                     }
                     // Invisible button overlay over the canvas to capture mouse input context if needed
